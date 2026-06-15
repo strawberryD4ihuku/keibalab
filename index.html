@@ -188,6 +188,10 @@
           <div class="field"><label>レース番号</label><select id="race-num"><option>1R</option><option>2R</option><option>3R</option><option>4R</option><option>5R</option><option>6R</option><option>7R</option><option>8R</option><option>9R</option><option selected>10R</option><option>11R</option><option>12R</option></select></div>
           <div class="field"><label>レース名</label><input type="text" id="race-name" placeholder="エプソムC G3"></div>
         </div>
+        <div style="margin-top:10px;display:flex;align-items:center;gap:12px">
+          <button class="btn-yoso" style="width:auto" onclick="fetchRaceData()">🔄 JRAからデータ取得</button>
+          <span id="fetch-status" style="font-size:12px;color:var(--text2)"></span>
+        </div>
       </div>
 
       <div class="card">
@@ -276,6 +280,7 @@
 <script>
 const SUPABASE_URL = 'https://hgtepblyevdilkudgues.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_PbCRa6F27FbYICKu0oGFvQ_c3e4kb49';
+const EDGE_FUNC_URL = `${SUPABASE_URL}/functions/v1/race-data`;
 const { createClient } = supabase;
 const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
 
@@ -286,20 +291,9 @@ let selectedHorses = new Set();
 let yosoHorses = [];
 let monthlyChart = null;
 
-const WAKU_COLORS = ['#d32f2f','#d32f2f','#7b1fa2','#1565c0','#00695c','#00695c','#f57f17','f57f17','#e65100'];
+const WAKU_COLORS = ['#d32f2f','#d32f2f','#7b1fa2','#1565c0','#00695c','#00695c','#f57f17','#f57f17','#e65100'];
 
-const horses = [
-  {num:1,waku:1,name:'アスタリスク',jockey:'福永祐一',p1:1,p2:3,p3:2,age3f:33.4,odds:3.2,ai:95},
-  {num:2,waku:2,name:'ブルーオーシャン',jockey:'川田将雅',p1:2,p2:1,p3:4,age3f:33.8,odds:4.5,ai:88},
-  {num:3,waku:2,name:'サクラノハナ',jockey:'横山武史',p1:5,p2:2,p3:1,age3f:34.1,odds:7.1,ai:75},
-  {num:4,waku:3,name:'ゴールデンラン',jockey:'Mデムーロ',p1:3,p2:5,p3:3,age3f:33.6,odds:9.8,ai:70},
-  {num:5,waku:4,name:'テイエムサンダー',jockey:'武豊',p1:4,p2:6,p3:8,age3f:34.5,odds:12.0,ai:55},
-  {num:6,waku:4,name:'シルバーウィング',jockey:'岩田望来',p1:7,p2:4,p3:5,age3f:34.0,odds:15.3,ai:60},
-  {num:7,waku:5,name:'フジノアルコン',jockey:'池添謙一',p1:6,p2:7,p3:9,age3f:35.1,odds:22.0,ai:40},
-  {num:8,waku:5,name:'クロノスター',jockey:'戸崎圭太',p1:2,p2:8,p3:6,age3f:33.9,odds:6.3,ai:80},
-  {num:9,waku:6,name:'ミライトウシ',jockey:'Cルメール',p1:1,p2:2,p3:7,age3f:33.2,odds:2.1,ai:92},
-  {num:10,waku:6,name:'ヒカリノカゼ',jockey:'三浦皇成',p1:8,p2:9,p3:2,age3f:34.7,odds:45.0,ai:30},
-];
+let horses = [];
 
 // Auth
 async function doGoogleLogin() {
@@ -340,6 +334,37 @@ function initApp() {
   const today = new Date().toISOString().split('T')[0];
   document.getElementById('race-date').value = today;
   renderTable();
+}
+
+// JRAからデータ取得
+async function fetchRaceData() {
+  const venue = document.getElementById('venue').value;
+  const date = document.getElementById('race-date').value;
+  const raceNumRaw = document.getElementById('race-num').value; // "10R"
+  const raceNum = raceNumRaw.replace('R', '');
+  const status = document.getElementById('fetch-status');
+
+  if (!date) { showToast('日付を選択してください'); return; }
+
+  status.textContent = '取得中...';
+  selectedHorses.clear();
+
+  try {
+    const res = await fetch(
+      `${EDGE_FUNC_URL}?venue=${encodeURIComponent(venue)}&date=${date}&race_num=${raceNum}`,
+      { headers: { 'Authorization': `Bearer ${SUPABASE_KEY}` } }
+    );
+    const json = await res.json();
+    if (json.error) throw new Error(json.error);
+    if (!json.horses?.length) throw new Error('出走馬データが取得できませんでした');
+
+    horses = json.horses;
+    renderTable();
+    status.textContent = `✅ ${horses.length}頭取得（${venue} ${raceNum}R）`;
+  } catch (e) {
+    status.textContent = `❌ ${e.message}`;
+    showToast('データ取得失敗: ' + e.message);
+  }
 }
 
 // Page navigation
