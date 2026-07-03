@@ -1,0 +1,675 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>KeibaLab</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #0f1117;
+    --bg2: #1a1d27;
+    --bg3: #22263a;
+    --border: rgba(255,255,255,0.08);
+    --border2: rgba(255,255,255,0.15);
+    --text: #f0f0f0;
+    --text2: #8b8fa8;
+    --text3: #5a5d72;
+    --accent: #4f8ef7;
+    --accent2: #2d6be4;
+    --green: #3ecf8e;
+    --red: #f05252;
+    --gold: #f0c040;
+    --radius: 10px;
+    --radius-sm: 6px;
+  }
+  body { font-family: -apple-system, 'Hiragino Sans', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; font-size: 14px; line-height: 1.6; }
+
+  /* Auth */
+  #auth-screen { display: flex; align-items: center; justify-content: center; min-height: 100vh; background: var(--bg); }
+  .auth-card { background: var(--bg2); border: 1px solid var(--border); border-radius: 16px; padding: 2.5rem 2rem; width: 100%; max-width: 380px; }
+  .auth-logo { text-align: center; margin-bottom: 2rem; }
+  .auth-logo h1 { font-size: 22px; font-weight: 600; color: var(--text); }
+  .auth-logo p { font-size: 13px; color: var(--text2); margin-top: 4px; }
+  .form-group { margin-bottom: 1rem; }
+  .form-group label { display: block; font-size: 12px; color: var(--text2); margin-bottom: 6px; }
+  .btn { width: 100%; padding: 12px; border-radius: var(--radius-sm); border: 1px solid var(--border2); font-size: 14px; font-weight: 500; cursor: pointer; transition: all 0.15s; display: flex; align-items: center; justify-content: center; gap: 8px; }
+  .btn-google { background: var(--bg3); color: var(--text); }
+  .btn-google:hover { border-color: var(--accent); background: var(--bg2); }
+  .auth-error { color: var(--red); font-size: 12px; margin-top: 8px; text-align: center; min-height: 18px; }
+
+  /* App */
+  #app { display: none; flex-direction: column; min-height: 100vh; }
+  .topbar { background: var(--bg2); border-bottom: 1px solid var(--border); padding: 0 1.5rem; display: flex; align-items: center; justify-content: space-between; height: 52px; position: sticky; top: 0; z-index: 100; }
+  .logo { font-size: 15px; font-weight: 600; color: var(--text); display: flex; align-items: center; gap: 8px; }
+  .logo-badge { background: rgba(79,142,247,0.2); color: var(--accent); font-size: 11px; padding: 2px 8px; border-radius: 100px; font-weight: 500; }
+  .nav { display: flex; gap: 0; }
+  .nav-btn { padding: 0 1rem; height: 52px; display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text2); cursor: pointer; border-bottom: 2px solid transparent; transition: all 0.15s; }
+  .nav-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .topbar-right { display: flex; align-items: center; gap: 12px; }
+  .user-info { font-size: 12px; color: var(--text2); }
+  .logout-btn { font-size: 12px; color: var(--text3); cursor: pointer; padding: 4px 8px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: none; color: var(--text2); transition: all 0.15s; }
+  .logout-btn:hover { border-color: var(--border2); color: var(--text); }
+
+  .main { flex: 1; padding: 1.5rem; max-width: 1100px; margin: 0 auto; width: 100%; }
+  .page { display: none; }
+  .page.active { display: block; }
+
+  /* Cards */
+  .card { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius); padding: 1.25rem; margin-bottom: 1rem; }
+  .card-title { font-size: 13px; font-weight: 500; color: var(--text2); margin-bottom: 1rem; display: flex; align-items: center; gap: 6px; }
+
+  /* Race selector */
+  .race-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+  .field label { font-size: 12px; color: var(--text2); display: block; margin-bottom: 5px; }
+  select, input[type=text], input[type=date], input[type=number] {
+    width: 100%; background: var(--bg3); border: 1px solid var(--border); border-radius: var(--radius-sm);
+    padding: 8px 10px; color: var(--text); font-size: 13px; outline: none; transition: border 0.15s;
+  }
+  select:focus, input:focus { border-color: var(--accent); }
+
+  /* Axis pills */
+  .axis-pills { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 1rem; }
+  .pill { padding: 5px 14px; border-radius: 100px; font-size: 12px; cursor: pointer; border: 1px solid var(--border2); color: var(--text2); background: transparent; transition: all 0.15s; }
+  .pill.active { background: rgba(79,142,247,0.15); border-color: var(--accent); color: var(--accent); font-weight: 500; }
+  .axis-desc { font-size: 12px; color: var(--text2); background: var(--bg3); border-radius: var(--radius-sm); padding: 8px 12px; margin-bottom: 1rem; border-left: 2px solid var(--accent); }
+
+  /* Uma table */
+  .table-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { background: var(--bg3); padding: 8px 10px; text-align: center; font-weight: 500; font-size: 11px; color: var(--text2); border-bottom: 1px solid var(--border); white-space: nowrap; }
+  td { padding: 8px 10px; text-align: center; border-bottom: 1px solid var(--border); vertical-align: middle; }
+  tr:hover td { background: rgba(255,255,255,0.02); }
+  tr.selected td { background: rgba(79,142,247,0.07); }
+  .waku-num { width: 24px; height: 24px; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; border: 1px solid var(--border2); }
+  .rank-badge { padding: 2px 7px; border-radius: 4px; font-size: 11px; font-weight: 500; }
+  .r1 { background: rgba(240,192,64,0.2); color: var(--gold); }
+  .r2 { background: rgba(62,207,142,0.15); color: var(--green); }
+  .r3 { background: rgba(79,142,247,0.15); color: var(--accent); }
+  .r-other { background: var(--bg3); color: var(--text2); }
+  .ai-score { font-weight: 600; }
+  .score-high { color: var(--green); }
+  .score-mid { color: var(--accent); }
+  .score-low { color: var(--text2); }
+
+  /* Yoso result */
+  .yoso-actions { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border); }
+  .yoso-result { margin-top: 1rem; background: var(--bg3); border-radius: var(--radius); padding: 1rem 1.25rem; border-left: 3px solid var(--gold); }
+  .yoso-mark { font-size: 12px; color: var(--text2); margin-bottom: 6px; }
+  .yoso-horses { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+  .yoso-tag { background: var(--bg2); border: 1px solid var(--border2); border-radius: var(--radius-sm); padding: 4px 10px; font-size: 12px; }
+  .yoso-comment { font-size: 12px; color: var(--text2); margin-top: 8px; }
+
+  /* Save bet form */
+  .bet-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border); }
+  .btn-save { background: var(--green); color: #0a2a1a; border: none; padding: 9px 20px; border-radius: var(--radius-sm); font-size: 13px; font-weight: 600; cursor: pointer; transition: all 0.15s; white-space: nowrap; }
+  .btn-save:hover { opacity: 0.85; }
+  .btn-yoso { background: var(--accent); color: white; border: none; padding: 9px 20px; border-radius: var(--radius-sm); font-size: 13px; font-weight: 500; cursor: pointer; transition: all 0.15s; }
+  .btn-yoso:hover { background: var(--accent2); }
+
+  /* Stats */
+  .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin-bottom: 1.25rem; }
+  .stat-card { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem; }
+  .stat-label { font-size: 11px; color: var(--text2); margin-bottom: 4px; }
+  .stat-val { font-size: 22px; font-weight: 600; }
+  .green { color: var(--green); }
+  .red { color: var(--red); }
+  .chart-wrap { position: relative; height: 200px; }
+  .members-grid { display: flex; flex-direction: column; gap: 10px; }
+  .member-row { display: flex; align-items: center; gap: 12px; padding: 10px; background: var(--bg3); border-radius: var(--radius-sm); }
+  .m-avatar { width: 32px; height: 32px; border-radius: 50%; background: rgba(79,142,247,0.2); color: var(--accent); display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 600; flex-shrink: 0; }
+  .m-info { flex: 1; }
+  .m-name { font-size: 13px; font-weight: 500; }
+  .m-stats { font-size: 11px; color: var(--text2); margin-top: 2px; }
+  .m-balance { font-size: 13px; font-weight: 600; text-align: right; }
+  .tend-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--border); }
+  .tend-label { width: 60px; font-size: 13px; }
+  .tend-bar-bg { flex: 1; background: var(--bg3); border-radius: 100px; height: 6px; overflow: hidden; }
+  .tend-bar { height: 100%; border-radius: 100px; background: var(--accent); }
+  .tend-pct { width: 36px; text-align: right; font-size: 12px; color: var(--text2); }
+
+  /* Bets history */
+  .bets-list { display: flex; flex-direction: column; gap: 8px; }
+  .bet-row { background: var(--bg3); border-radius: var(--radius-sm); padding: 10px 12px; display: flex; align-items: center; gap: 12px; font-size: 13px; }
+  .bet-type { background: rgba(79,142,247,0.15); color: var(--accent); padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 500; white-space: nowrap; }
+  .bet-hit { color: var(--green); font-weight: 500; }
+  .bet-miss { color: var(--text3); }
+  .toast { position: fixed; bottom: 20px; right: 20px; background: var(--bg2); border: 1px solid var(--border2); border-radius: var(--radius); padding: 12px 16px; font-size: 13px; z-index: 999; opacity: 0; transform: translateY(10px); transition: all 0.25s; pointer-events: none; }
+  .toast.show { opacity: 1; transform: translateY(0); }
+  .empty { text-align: center; color: var(--text3); padding: 2rem; font-size: 13px; }
+  .loading { text-align: center; color: var(--text2); padding: 1rem; font-size: 13px; }
+  .bet-horses { font-size: 11px; color: var(--text3); white-space: nowrap; }
+
+  @media (max-width: 640px) {
+    .topbar { padding: 0 0.75rem; gap: 8px; overflow-x: auto; }
+    .topbar > div:first-child { gap: 10px; }
+    .nav-btn { padding: 0 0.6rem; white-space: nowrap; }
+    .user-info { display: none; }
+    .main { padding: 0.75rem; }
+    th, td { padding: 6px 6px; }
+    .bet-row { flex-wrap: wrap; }
+  }
+</style>
+</head>
+<body>
+
+<!-- Auth -->
+<div id="auth-screen">
+  <div class="auth-card">
+    <div class="auth-logo">
+      <h1>🏇 KeibaLab</h1>
+      <p>競馬予想サイト</p>
+    </div>
+    <button class="btn btn-google" onclick="doGoogleLogin()">
+      <svg width="18" height="18" viewBox="0 0 18 18" style="vertical-align:middle;margin-right:8px"><path fill="#4285F4" d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844c-.209 1.125-.843 2.078-1.796 2.717v2.258h2.908c1.702-1.567 2.684-3.875 2.684-6.615z"/><path fill="#34A853" d="M9 18c2.43 0 4.467-.806 5.956-2.184l-2.908-2.258c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332A8.997 8.997 0 0 0 9 18z"/><path fill="#FBBC05" d="M3.964 10.707A5.41 5.41 0 0 1 3.682 9c0-.593.102-1.17.282-1.707V4.961H.957A8.996 8.996 0 0 0 0 9c0 1.452.348 2.827.957 4.039l3.007-2.332z"/><path fill="#EA4335" d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0A8.997 8.997 0 0 0 .957 4.961L3.964 7.293C4.672 5.163 6.656 3.58 9 3.58z"/></svg>
+      Googleでログイン
+    </button>
+    <div class="auth-error" id="auth-error"></div>
+    <p style="text-align:center;font-size:11px;color:var(--text3);margin-top:1rem">Googleアカウントでログインしてください</p>
+  </div>
+</div>
+
+<!-- App -->
+<div id="app">
+  <div class="topbar">
+    <div style="display:flex;align-items:center;gap:20px">
+      <div class="logo">🏇 KeibaLab</div>
+      <nav class="nav">
+        <div class="nav-btn active" onclick="showPage('yoso')">📋 予想</div>
+        <div class="nav-btn" onclick="showPage('stats')">📊 収支・成績</div>
+        <div class="nav-btn" onclick="showPage('bets')">📝 購入履歴</div>
+      </nav>
+    </div>
+    <div class="topbar-right">
+      <span class="user-info" id="user-display"></span>
+      <button class="logout-btn" onclick="doLogout()">ログアウト</button>
+    </div>
+  </div>
+
+  <div class="main">
+    <!-- 予想ページ -->
+    <div class="page active" id="page-yoso">
+      <div class="card">
+        <div class="card-title">📅 レース選択</div>
+        <div class="race-grid">
+          <div class="field"><label>開催場所</label><select id="venue"><option>東京</option><option>中山</option><option>阪神</option><option>京都</option><option>札幌</option><option>函館</option><option>福島</option><option>新潟</option><option>中京</option><option>小倉</option></select></div>
+          <div class="field"><label>日付</label><input type="date" id="race-date"></div>
+          <div class="field"><label>レース番号</label><select id="race-num"><option>1R</option><option>2R</option><option>3R</option><option>4R</option><option>5R</option><option>6R</option><option>7R</option><option>8R</option><option>9R</option><option selected>10R</option><option>11R</option><option>12R</option></select></div>
+          <div class="field"><label>レース名</label><input type="text" id="race-name" placeholder="エプソムC G3"></div>
+        </div>
+        <div style="margin-top:10px;display:flex;align-items:center;gap:12px">
+          <button class="btn-yoso" style="width:auto" id="fetch-btn" onclick="fetchRaceData()">🔄 出馬表を取得</button>
+          <span id="fetch-status" style="font-size:12px;color:var(--text2)"></span>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">🎯 予想の軸</div>
+        <div class="axis-pills">
+          <div class="pill active" onclick="setAxis(this,'馬柱')">🗒 馬柱</div>
+          <div class="pill" onclick="setAxis(this,'血統')">🧬 血統</div>
+          <div class="pill" onclick="setAxis(this,'騎手')">👤 騎手</div>
+          <div class="pill" onclick="setAxis(this,'タイム')">⏱ タイム</div>
+          <div class="pill" onclick="setAxis(this,'斤量')">⚖️ 斤量</div>
+        </div>
+        <div class="axis-desc" id="axis-desc">馬柱軸：過去成績・着順・上がり3F・コース適性を総合評価してスコアリング</div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">📊 馬柱 <span style="color:var(--text3);font-weight:400;margin-left:4px">（2頭以上選択すると、その中から予想します）</span></div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr>
+              <th>選</th><th>枠</th><th>馬番</th><th>馬名</th><th>騎手</th><th>前走</th><th>2走前</th><th>3走前</th><th>上がり3F</th><th>オッズ</th><th>参考スコア</th>
+            </tr></thead>
+            <tbody id="uma-tbody"></tbody>
+          </table>
+        </div>
+        <div class="yoso-actions">
+          <div class="field"><label>買い方</label>
+            <select id="bet-type" style="width:auto">
+              <option>単勝</option><option>複勝</option><option selected>馬連</option><option>馬単</option><option>ワイド</option><option>3連複</option><option>3連単</option>
+            </select>
+          </div>
+          <button class="btn-yoso" onclick="generateYoso()">✨ 予想を出す</button>
+        </div>
+        <div id="yoso-result" style="display:none" class="yoso-result">
+          <div class="yoso-mark">◎ 本命</div>
+          <div class="yoso-horses" id="honmei-area"></div>
+          <div class="yoso-mark">○ 対抗 / ▲ 単穴 / △ 連下</div>
+          <div class="yoso-horses" id="taikou-area"></div>
+          <div class="yoso-comment" id="yoso-comment"></div>
+        </div>
+
+        <!-- 購入記録 -->
+        <div class="bet-form" id="bet-form" style="display:none">
+          <div class="field"><label>投資額（円）</label><input type="number" id="bet-amount" placeholder="1000" min="100" step="100"></div>
+          <div class="field"><label>払戻額（円）</label><input type="number" id="bet-return" placeholder="0" min="0"></div>
+          <div class="field" style="display:flex;align-items:flex-end">
+            <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+              <input type="checkbox" id="bet-hit" style="width:auto"> 的中
+            </label>
+          </div>
+          <div style="display:flex;align-items:flex-end">
+            <button class="btn-save" onclick="saveBet()">💾 収支を記録する</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 収支ページ -->
+    <div class="page" id="page-stats">
+      <div class="stats-grid" id="my-stats"></div>
+      <div class="card">
+        <div class="card-title">📈 月別収支（自分・今年）</div>
+        <div class="chart-wrap"><canvas id="monthly-chart"></canvas></div>
+      </div>
+      <div class="card">
+        <div class="card-title">👥 メンバー比較</div>
+        <div class="members-grid" id="members-grid"><div class="loading">読み込み中...</div></div>
+      </div>
+      <div class="card">
+        <div class="card-title">🎰 買い方の傾向（全体）</div>
+        <div id="tend-list"></div>
+      </div>
+    </div>
+
+    <!-- 履歴ページ -->
+    <div class="page" id="page-bets">
+      <div class="card">
+        <div class="card-title">📝 購入履歴</div>
+        <div class="bets-list" id="bets-list"><div class="loading">読み込み中...</div></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const SUPABASE_URL = 'https://hgtepblyevdilkudgues.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_PbCRa6F27FbYICKu0oGFvQ_c3e4kb49';
+// localhostでproxy.js経由で開いている場合はローカルプロキシを使う
+const LOCAL_MODE = ['localhost', '127.0.0.1'].includes(location.hostname);
+const EDGE_FUNC_URL = LOCAL_MODE ? `${location.origin}/race-data` : `${SUPABASE_URL}/functions/v1/race-data`;
+const { createClient } = supabase;
+const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
+
+let currentUser = null;
+let currentProfile = null;
+let currentAxis = '馬柱';
+let selectedHorses = new Set();
+let yosoHorses = [];
+let monthlyChart = null;
+
+// JRA公式の枠色（1白・2黒・3赤・4青・5黄・6緑・7橙・8桃）
+const WAKU_COLORS = {
+  1: {bg:'#ffffff', fg:'#222'},
+  2: {bg:'#222222', fg:'#fff'},
+  3: {bg:'#e6413a', fg:'#fff'},
+  4: {bg:'#3268c1', fg:'#fff'},
+  5: {bg:'#f0c832', fg:'#222'},
+  6: {bg:'#3aa655', fg:'#fff'},
+  7: {bg:'#e8842c', fg:'#fff'},
+  8: {bg:'#f0a0be', fg:'#222'},
+};
+
+let horses = [];
+
+// HTMLエスケープ（スクレイピングデータをそのままDOMに入れない）
+function esc(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+// Auth
+async function doGoogleLogin() {
+  const {error} = await sb.auth.signInWithOAuth({
+    provider: 'google',
+    options: { redirectTo: window.location.href }
+  });
+  if (error) { document.getElementById('auth-error').textContent = 'ログイン失敗：' + error.message; }
+}
+
+async function doLogout() {
+  await sb.auth.signOut();
+  document.getElementById('app').style.display = 'none';
+  document.getElementById('auth-screen').style.display = 'flex';
+}
+
+sb.auth.onAuthStateChange(async (event, session) => {
+  if (session?.user) {
+    currentUser = session.user;
+    const name = currentUser.user_metadata?.full_name || currentUser.email.split('@')[0];
+    await sb.from('profiles').upsert({id: currentUser.id, display_name: name}, {onConflict: 'id', ignoreDuplicates: true});
+    const {data} = await sb.from('profiles').select('*').eq('id', currentUser.id).maybeSingle();
+    currentProfile = data;
+    document.getElementById('user-display').textContent = (data?.display_name || currentUser.email);
+    document.getElementById('auth-screen').style.display = 'none';
+    document.getElementById('app').style.display = 'flex';
+    document.getElementById('app').style.flexDirection = 'column';
+    initApp();
+  }
+});
+
+// App init
+function initApp() {
+  const today = new Date().toISOString().split('T')[0];
+  document.getElementById('race-date').value = today;
+  renderTable();
+}
+
+// JRAからデータ取得
+async function fetchRaceData() {
+  const venue = document.getElementById('venue').value;
+  const date = document.getElementById('race-date').value;
+  const raceNumRaw = document.getElementById('race-num').value; // "10R"
+  const raceNum = raceNumRaw.replace('R', '');
+  const status = document.getElementById('fetch-status');
+
+  if (!date) { showToast('日付を選択してください'); return; }
+
+  const btn = document.getElementById('fetch-btn');
+  btn.disabled = true;
+  btn.style.opacity = '0.5';
+  status.textContent = '取得中...';
+  selectedHorses.clear();
+
+  try {
+    const res = await fetch(
+      `${EDGE_FUNC_URL}?venue=${encodeURIComponent(venue)}&date=${date}&race_num=${raceNum}`,
+      { headers: { 'Authorization': `Bearer ${SUPABASE_KEY}` } }
+    );
+    const json = await res.json();
+    if (json.error) throw new Error(json.error);
+    if (!json.horses?.length) throw new Error('出走馬データが取得できませんでした');
+
+    horses = json.horses;
+    renderTable();
+    document.getElementById('yoso-result').style.display = 'none';
+    document.getElementById('bet-form').style.display = 'none';
+    // レース名が取れたら自動入力（手入力済みなら上書きしない）
+    const nameInput = document.getElementById('race-name');
+    if (json.race_name && !nameInput.value) nameInput.value = json.race_name;
+    status.textContent = `✅ ${horses.length}頭取得（${venue} ${raceNum}R${json.race_name ? ' ' + json.race_name : ''}）`;
+  } catch (e) {
+    status.textContent = `❌ ${e.message}`;
+    showToast('データ取得失敗: ' + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.style.opacity = '';
+  }
+}
+
+// Page navigation
+function showPage(page) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('page-'+page).classList.add('active');
+  const idx = {yoso:0,stats:1,bets:2}[page];
+  document.querySelectorAll('.nav-btn')[idx].classList.add('active');
+  if (page === 'stats') loadStats();
+  if (page === 'bets') loadBets();
+}
+
+// Axis
+const axisDescs = {
+  '馬柱': '馬柱軸：過去成績・着順・上がり3F・コース適性を総合評価してスコアリング',
+  '血統': '血統軸：父・母父の種牡馬特性、距離・馬場適性を重視してスコアリング',
+  '騎手': '騎手軸：騎手の当該コース勝率・近況の乗り鞍状態を最優先でスコアリング',
+  'タイム': 'タイム軸：過去走のタイム絶対値・レースペース・上がり順位を基準に評価',
+  '斤量': '斤量軸：斤量変化・馬体重・過去の斤量別成績から有利な馬を抽出',
+};
+function setAxis(el, name) {
+  document.querySelectorAll('.pill').forEach(p => p.classList.remove('active'));
+  el.classList.add('active');
+  currentAxis = name;
+  document.getElementById('axis-desc').textContent = axisDescs[name] || '';
+  renderTable();
+}
+
+// Table
+function rankClass(r) { return r===1?'r1':r===2?'r2':r===3?'r3':'r-other'; }
+function scoreClass(s) { return s>=85?'score-high':s>=65?'score-mid':'score-low'; }
+function fmtRank(r) { return r ? `<span class="rank-badge ${rankClass(r)}">${r}着</span>` : '<span style="color:var(--text3)">–</span>'; }
+
+// 軸ごとにスコアが変わる決定的な擬似乱数（同じ馬名＋軸なら常に同じ値）
+function hashStr(s) {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
+  return Math.abs(h);
+}
+
+// 参考スコア：取得できたデータ（オッズ・近走着順・上がり3F）を使い、
+// 欠損分は軸ごとの決定的なゆらぎで補完する簡易ヒューリスティック
+function computeScore(h) {
+  let score = 50;
+  if (h.odds) score += Math.max(-15, 28 - Math.log(h.odds) * 9);   // 人気馬ほど加点
+  [[h.p1, 3], [h.p2, 2], [h.p3, 1]].forEach(([p, w]) => {
+    if (p) score += Math.max(0, 6 - p) * w;
+  });
+  if (h.age3f) score += Math.max(0, (36 - h.age3f) * 6);
+  score += hashStr(h.name + currentAxis) % 11 - 5;
+  return Math.min(99, Math.max(1, Math.round(score)));
+}
+
+function renderTable() {
+  const tbody = document.getElementById('uma-tbody');
+  if (!horses.length) {
+    tbody.innerHTML = '<tr><td colspan="11" class="empty">出走データがありません。「🔄 出馬表を取得」を押して読み込んでください</td></tr>';
+    return;
+  }
+  horses.forEach(h => { h.score = computeScore(h); });
+  const sorted = [...horses].sort((a,b) => b.score - a.score);
+  tbody.innerHTML = sorted.map(h => {
+    const wk = WAKU_COLORS[h.waku] || {bg:'#555', fg:'#fff'};
+    const sel = selectedHorses.has(h.num);
+    return `<tr class="${sel?'selected':''}" onclick="toggleHorse(${h.num})" style="cursor:pointer">
+      <td><span style="color:${sel?'var(--accent)':'var(--text3)'}">●</span></td>
+      <td><span class="waku-num" style="background:${wk.bg};color:${wk.fg}">${h.waku}</span></td>
+      <td><strong>${h.num}</strong></td>
+      <td style="text-align:left;font-weight:500">${esc(h.name)}</td>
+      <td style="color:var(--text2)">${esc(h.jockey)}</td>
+      <td>${fmtRank(h.p1)}</td>
+      <td>${fmtRank(h.p2)}</td>
+      <td>${fmtRank(h.p3)}</td>
+      <td style="color:var(--text2)">${h.age3f ?? '–'}</td>
+      <td style="color:var(--accent);font-weight:500;white-space:nowrap">${h.odds ? esc(h.odds)+'倍' : '–'}${h.ninki ? `<span style="color:var(--text3);font-size:11px;font-weight:400"> ${esc(h.ninki)}人気</span>` : ''}</td>
+      <td><span class="ai-score ${scoreClass(h.score)}">${h.score}点</span></td>
+    </tr>`;
+  }).join('');
+}
+
+function toggleHorse(num) {
+  if (selectedHorses.has(num)) selectedHorses.delete(num); else selectedHorses.add(num);
+  renderTable();
+}
+
+// Yoso
+function generateYoso() {
+  if (!horses.length) { showToast('先に「出馬表を取得」でデータを読み込んでください'); return; }
+
+  // 2頭以上選択していればその中から、なければ全頭から
+  const useSelection = selectedHorses.size >= 2;
+  const pool = useSelection ? horses.filter(h => selectedHorses.has(h.num)) : horses;
+  const sorted = [...pool].sort((a,b) => b.score - a.score);
+  yosoHorses = sorted;
+
+  const tag = (mark, h) => `<span class="yoso-tag">${mark} ${h.num}番 ${esc(h.name)}${h.odds ? `（${esc(h.odds)}倍）` : ''}</span>`;
+  const top = sorted[0];
+  document.getElementById('honmei-area').innerHTML = tag('◎', top);
+  document.getElementById('taikou-area').innerHTML =
+    sorted.slice(1, 4).map((h,i) => tag(['○','▲','△'][i], h)).join('') ||
+    '<span style="font-size:12px;color:var(--text3)">対抗馬なし（選択頭数が少ないため）</span>';
+
+  const poolDesc = useSelection ? `選択した${pool.length}頭` : `全${pool.length}頭`;
+  let comment = `${currentAxis}軸スコア順（${poolDesc}から）。◎${top.name}が${top.score}点で最上位`;
+  if (sorted[1]) comment += `、○${sorted[1].name}（${sorted[1].score}点）が対抗`;
+  comment += '。';
+  document.getElementById('yoso-comment').textContent = comment;
+
+  document.getElementById('yoso-result').style.display = 'block';
+  document.getElementById('bet-form').style.display = 'grid';
+}
+
+// Save bet
+async function saveBet() {
+  if (!currentUser) return;
+  const amount = parseInt(document.getElementById('bet-amount').value) || 0;
+  const returnAmt = parseInt(document.getElementById('bet-return').value) || 0;
+  const isHit = document.getElementById('bet-hit').checked;
+  const betType = document.getElementById('bet-type').value;
+  const venue = document.getElementById('venue').value;
+  const raceDate = document.getElementById('race-date').value;
+  const raceNum = document.getElementById('race-num').value;
+  const raceName = document.getElementById('race-name').value || '（未入力）';
+  if (!amount) { showToast('投資額を入力してください'); return; }
+
+  // 同じレースが登録済みなら再利用し、なければ新規登録（重複行を作らない）
+  const {data: existing} = await sb.from('races').select('id')
+    .eq('race_date', raceDate).eq('venue', venue).eq('race_number', parseInt(raceNum))
+    .limit(1).maybeSingle();
+  let raceId = existing?.id;
+  if (!raceId) {
+    const {data: raceData, error: raceErr} = await sb.from('races').insert({
+      race_date: raceDate, venue, race_number: parseInt(raceNum), race_name: raceName
+    }).select().single();
+    if (raceErr || !raceData?.id) { showToast('レース登録に失敗しました' + (raceErr ? ': ' + raceErr.message : '')); return; }
+    raceId = raceData.id;
+  }
+
+  const pickedNums = yosoHorses.slice(0,4).map(h=>h.num);
+  const {error} = await sb.from('bets').insert({
+    user_id: currentUser.id,
+    race_id: raceId,
+    bet_type: betType,
+    horses: pickedNums,
+    amount,
+    return_amount: returnAmt,
+    is_hit: isHit,
+  });
+  if (error) { showToast('保存失敗: ' + error.message); return; }
+  showToast('✅ 収支を記録しました！');
+  document.getElementById('bet-amount').value = '';
+  document.getElementById('bet-return').value = '';
+  document.getElementById('bet-hit').checked = false;
+}
+
+// Stats
+async function loadStats() {
+  if (!currentUser) return;
+
+  // 自分の収支
+  const {data: myBets} = await sb.from('bets').select('*, races(race_date)').eq('user_id', currentUser.id);
+  const totalAmt = (myBets||[]).reduce((s,b) => s + b.amount, 0);
+  const totalRet = (myBets||[]).reduce((s,b) => s + (b.return_amount||0), 0);
+  const hits = (myBets||[]).filter(b=>b.is_hit).length;
+  const hitRate = myBets?.length ? ((hits/myBets.length)*100).toFixed(1) : '0.0';
+  const recovery = totalAmt ? ((totalRet/totalAmt)*100).toFixed(0) : '0';
+  const balance = totalRet - totalAmt;
+
+  document.getElementById('my-stats').innerHTML = [
+    {label:'通算収支', val: (balance>=0?'+':'')+balance.toLocaleString()+'円', cls: balance>=0?'green':'red'},
+    {label:'的中率', val: hitRate+'%', cls:''},
+    {label:'回収率', val: recovery+'%', cls: parseInt(recovery)>=100?'green':'red'},
+    {label:'投資合計', val: totalAmt.toLocaleString()+'円', cls:''},
+  ].map(s => `<div class="stat-card"><div class="stat-label">${s.label}</div><div class="stat-val ${s.cls}">${s.val}</div></div>`).join('');
+
+  // 月別グラフ（今年分のみ、レース開催日ベース）
+  const thisYear = new Date().getFullYear();
+  const monthly = Array(12).fill(0);
+  (myBets||[]).forEach(b => {
+    const d = new Date(b.races?.race_date || b.created_at);
+    if (d.getFullYear() !== thisYear) return;
+    monthly[d.getMonth()] += (b.return_amount||0) - b.amount;
+  });
+  if (monthlyChart) monthlyChart.destroy();
+  monthlyChart = new Chart(document.getElementById('monthly-chart'), {
+    type: 'bar',
+    data: {
+      labels: ['1月','2月','3月','4月','5月','6月','7月','8月','9月','10月','11月','12月'],
+      datasets: [{
+        data: monthly,
+        backgroundColor: monthly.map(v => v>=0?'rgba(62,207,142,0.6)':'rgba(240,82,82,0.6)'),
+        borderRadius: 4,
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { ticks: { color: '#8b8fa8', font: {size:11} }, grid: { color: 'rgba(255,255,255,0.04)' } },
+        y: { ticks: { color: '#8b8fa8', font: {size:11}, callback: v => v.toLocaleString()+'円' }, grid: { color: 'rgba(255,255,255,0.04)' } }
+      }
+    }
+  });
+
+  // メンバー比較
+  const {data: allProfiles} = await sb.from('profiles').select('*');
+  const {data: allBets} = await sb.from('bets').select('*');
+  const memberStats = (allProfiles||[]).map(p => {
+    const pb = (allBets||[]).filter(b=>b.user_id===p.id);
+    const amt = pb.reduce((s,b)=>s+b.amount,0);
+    const ret = pb.reduce((s,b)=>s+(b.return_amount||0),0);
+    const h = pb.filter(b=>b.is_hit).length;
+    return {
+      name: p.display_name || '？',
+      balance: ret - amt,
+      hitRate: pb.length ? ((h/pb.length)*100).toFixed(1) : '0.0',
+      recovery: amt ? ((ret/amt)*100).toFixed(0) : '0',
+    };
+  }).sort((a,b)=>b.balance-a.balance);
+
+  const maxRec = Math.max(...memberStats.map(m=>parseInt(m.recovery)||0), 1);
+  document.getElementById('members-grid').innerHTML = memberStats.length ?
+    memberStats.map(m => `
+      <div class="member-row">
+        <div class="m-avatar">${esc(m.name[0])}</div>
+        <div class="m-info">
+          <div class="m-name">${esc(m.name)}</div>
+          <div class="m-stats">的中率 ${m.hitRate}% ／ 回収率 ${m.recovery}%</div>
+        </div>
+        <div class="m-balance ${m.balance>=0?'green':'red'}">${m.balance>=0?'+':''}${m.balance.toLocaleString()}円</div>
+      </div>`).join('') : '<div class="empty">データなし</div>';
+
+  // 傾向
+  const betTypes = {};
+  (allBets||[]).forEach(b => { betTypes[b.bet_type] = (betTypes[b.bet_type]||0)+1; });
+  const total = Object.values(betTypes).reduce((s,v)=>s+v,0)||1;
+  const sorted = Object.entries(betTypes).sort((a,b)=>b[1]-a[1]);
+  const colors = ['#4f8ef7','#3ecf8e','#7f77dd','#f0c040','#f05252','#888'];
+  document.getElementById('tend-list').innerHTML = sorted.map((kv,i) => {
+    const pct = Math.round(kv[1]/total*100);
+    return `<div class="tend-row"><div class="tend-label">${esc(kv[0])}</div><div class="tend-bar-bg"><div class="tend-bar" style="width:${pct}%;background:${colors[i%colors.length]}"></div></div><div class="tend-pct">${pct}%</div></div>`;
+  }).join('') || '<div class="empty">データなし</div>';
+}
+
+// Bets history
+async function loadBets() {
+  if (!currentUser) return;
+  const {data} = await sb.from('bets').select('*, races(race_name, venue, race_date, race_number)').eq('user_id', currentUser.id).order('created_at', {ascending: false});
+  document.getElementById('bets-list').innerHTML = (data||[]).length ? data.map(b => {
+    const r = b.races;
+    const net = (b.return_amount||0) - b.amount;
+    const nums = Array.isArray(b.horses) && b.horses.length ? `<span class="bet-horses">[${b.horses.join('-')}]</span>` : '';
+    return `<div class="bet-row">
+      <span class="bet-type">${esc(b.bet_type)}</span>
+      <span style="flex:1;color:var(--text2)">${esc(r?.race_date||'')} ${esc(r?.venue||'')}${r?.race_number||''}R ${esc(r?.race_name||'')}</span>
+      ${nums}
+      <span style="color:var(--text2);margin-right:8px">¥${b.amount.toLocaleString()}</span>
+      <span class="${b.is_hit?'bet-hit':'bet-miss'}">${b.is_hit?`的中 +¥${(b.return_amount||0).toLocaleString()}`:'外れ'}</span>
+      <span style="font-weight:600;margin-left:8px;color:${net>=0?'var(--green)':'var(--red)'}">${net>=0?'+':''}¥${net.toLocaleString()}</span>
+    </div>`;
+  }).join('') : '<div class="empty">購入記録がありません</div>';
+}
+
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 2500);
+}
+</script>
+</body>
+</html>
