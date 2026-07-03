@@ -35,6 +35,13 @@
   .auth-logo p { font-size: 13px; color: var(--text2); margin-top: 4px; }
   .form-group { margin-bottom: 1rem; }
   .form-group label { display: block; font-size: 12px; color: var(--text2); margin-bottom: 6px; }
+  .auth-divider { display: flex; align-items: center; gap: 10px; margin: 1.2rem 0; color: var(--text3); font-size: 11px; }
+  .auth-divider::before, .auth-divider::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+  .auth-actions { display: flex; gap: 8px; }
+  .btn-primary { background: var(--accent); color: #fff; border: none; }
+  .btn-primary:hover { background: var(--accent2); }
+  .btn-outline { background: transparent; color: var(--text2); }
+  .btn-outline:hover { border-color: var(--accent); color: var(--accent); }
   .btn { width: 100%; padding: 12px; border-radius: var(--radius-sm); border: 1px solid var(--border2); font-size: 14px; font-weight: 500; cursor: pointer; transition: all 0.15s; display: flex; align-items: center; justify-content: center; gap: 8px; }
   .btn-google { background: var(--bg3); color: var(--text); }
   .btn-google:hover { border-color: var(--accent); background: var(--bg2); }
@@ -64,7 +71,7 @@
   /* Race selector */
   .race-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
   .field label { font-size: 12px; color: var(--text2); display: block; margin-bottom: 5px; }
-  select, input[type=text], input[type=date], input[type=number] {
+  select, input[type=text], input[type=date], input[type=number], input[type=email], input[type=password] {
     width: 100%; background: var(--bg3); border: 1px solid var(--border); border-radius: var(--radius-sm);
     padding: 8px 10px; color: var(--text); font-size: 13px; outline: none; transition: border 0.15s;
   }
@@ -166,8 +173,16 @@
       <svg width="18" height="18" viewBox="0 0 18 18" style="vertical-align:middle;margin-right:8px"><path fill="#4285F4" d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844c-.209 1.125-.843 2.078-1.796 2.717v2.258h2.908c1.702-1.567 2.684-3.875 2.684-6.615z"/><path fill="#34A853" d="M9 18c2.43 0 4.467-.806 5.956-2.184l-2.908-2.258c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332A8.997 8.997 0 0 0 9 18z"/><path fill="#FBBC05" d="M3.964 10.707A5.41 5.41 0 0 1 3.682 9c0-.593.102-1.17.282-1.707V4.961H.957A8.996 8.996 0 0 0 0 9c0 1.452.348 2.827.957 4.039l3.007-2.332z"/><path fill="#EA4335" d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0A8.997 8.997 0 0 0 .957 4.961L3.964 7.293C4.672 5.163 6.656 3.58 9 3.58z"/></svg>
       Googleでログイン
     </button>
+    <div class="auth-divider">または メールアドレスで</div>
+    <div class="form-group"><label>メールアドレス</label><input type="email" id="auth-email" placeholder="mail@example.com" autocomplete="email"></div>
+    <div class="form-group"><label>パスワード（6文字以上）</label><input type="password" id="auth-password" autocomplete="current-password" onkeydown="if(event.key==='Enter')doEmailLogin()"></div>
+    <div class="form-group"><label>表示名（新規登録時のみ・空欄ならメールアドレスから自動）</label><input type="text" id="auth-name" placeholder="例：たろう"></div>
+    <div class="auth-actions">
+      <button class="btn btn-primary" onclick="doEmailLogin()">ログイン</button>
+      <button class="btn btn-outline" onclick="doEmailSignup()">新規登録</button>
+    </div>
     <div class="auth-error" id="auth-error"></div>
-    <p style="text-align:center;font-size:11px;color:var(--text3);margin-top:1rem">Googleアカウントでログインしてください</p>
+    <p style="text-align:center;font-size:11px;color:var(--text3);margin-top:0.5rem">新しい人は「新規登録」からその場でアカウントを作れます</p>
   </div>
 </div>
 
@@ -330,6 +345,43 @@ async function doGoogleLogin() {
     options: { redirectTo: window.location.href }
   });
   if (error) { document.getElementById('auth-error').textContent = 'ログイン失敗：' + error.message; }
+}
+
+function authError(msg) { document.getElementById('auth-error').textContent = msg; }
+
+// Supabaseの英語エラーを日本語化
+function jpAuthError(error) {
+  const m = error?.message || '';
+  if (m.includes('Invalid login credentials')) return 'メールアドレスまたはパスワードが違います';
+  if (m.includes('already registered')) return 'このメールアドレスは登録済みです。「ログイン」を押してください';
+  if (m.includes('at least 6') || m.includes('Password should')) return 'パスワードは6文字以上にしてください';
+  if (m.includes('valid email') || m.includes('invalid format')) return 'メールアドレスの形式が正しくありません';
+  if (m.includes('rate limit') || m.includes('Too many')) return '試行回数が多すぎます。少し待ってからやり直してください';
+  return 'エラー: ' + m;
+}
+
+async function doEmailLogin() {
+  const email = document.getElementById('auth-email').value.trim();
+  const password = document.getElementById('auth-password').value;
+  if (!email || !password) { authError('メールアドレスとパスワードを入力してください'); return; }
+  authError('');
+  const {error} = await sb.auth.signInWithPassword({email, password});
+  if (error) authError(jpAuthError(error));
+}
+
+async function doEmailSignup() {
+  const email = document.getElementById('auth-email').value.trim();
+  const password = document.getElementById('auth-password').value;
+  const name = document.getElementById('auth-name').value.trim();
+  if (!email || !password) { authError('メールアドレスとパスワードを入力してください'); return; }
+  if (password.length < 6) { authError('パスワードは6文字以上にしてください'); return; }
+  authError('');
+  const {error} = await sb.auth.signUp({
+    email, password,
+    options: { data: { full_name: name || email.split('@')[0] } },
+  });
+  if (error) { authError(jpAuthError(error)); return; }
+  // 自動確認が有効なのでセッションが即発行され、onAuthStateChangeで画面遷移する
 }
 
 async function doLogout() {
