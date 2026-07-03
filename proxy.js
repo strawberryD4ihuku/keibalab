@@ -29,25 +29,98 @@ const server = http.createServer(async (req, res) => {
 
   if (url.pathname !== '/race-data') { res.writeHead(404); res.end('Not found'); return; }
 
+  const action = url.searchParams.get('action') || '';
   const venue = url.searchParams.get('venue') || '東京';
   const date = url.searchParams.get('date') || '';
   const raceNum = parseInt(url.searchParams.get('race_num') || '1');
 
-  if (!date) {
-    res.writeHead(400, {'Content-Type': 'application/json'});
-    res.end(JSON.stringify({ error: 'date は必須です' }));
-    return;
-  }
-
   try {
-    const result = await fetchRaceData(venue, date, raceNum);
+    let result;
+    if (action === 'kaisai') {
+      result = await fetchKaisaiDates();
+    } else if (action === 'venues') {
+      if (!date) throw Object.assign(new Error('date は必須です'), {status: 400});
+      result = await fetchVenues(date);
+    } else {
+      if (!date) throw Object.assign(new Error('date は必須です'), {status: 400});
+      result = await fetchRaceData(venue, date, raceNum);
+    }
     res.writeHead(200, {'Content-Type': 'application/json; charset=utf-8'});
     res.end(JSON.stringify(result));
   } catch (e) {
-    res.writeHead(500, {'Content-Type': 'application/json'});
+    res.writeHead(e.status || 500, {'Content-Type': 'application/json'});
     res.end(JSON.stringify({ error: e.message }));
   }
 });
+
+// 今月＋来月の開催日一覧（netkeibaカレンダーから）
+async function fetchKaisaiDates() {
+  const now = new Date();
+  const months = [[now.getFullYear(), now.getMonth() + 1]];
+  months.push(now.getMonth() === 11 ? [now.getFullYear() + 1, 1] : [now.getFullYear(), now.getMonth() + 2]);
+
+  const dates = [];
+  for (const [y, m] of months) {
+    let cal;
+    try {
+      cal = await fetchHtml(`https://race.netkeiba.com/top/calendar.html?year=${y}&month=${m}`);
+    } catch { continue; }
+    for (const cell of cal.matchAll(/<a href="[^"]*kaisai_date=(\d{8})"[\s\S]*?<\/a>/g)) {
+      const d = cell[1];
+      const iso = `${d.slice(0,4)}-${d.slice(4,6)}-${d.slice(6,8)}`;
+      if (dates.some(x => x.date === iso)) continue;
+      dates.push({
+        date: iso,
+        venues: [...cell[0].matchAll(/class="JyoName">([^<]+)</g)].map(x => x[1].trim()),
+        graded: [...cell[0].matchAll(/class="JName">([^<]+)</g)].map(x => x[1].trim()),
+      });
+    }
+  }
+  dates.sort((a, b) => a.date.localeCompare(b.date));
+  return { dates };
+}
+
+// 指定日に開催中の競馬場と各場のメインレース
+// グレード（G1>G2>G3>L>OP）付きレースを優先、なければ11R（JRAの慣例）
+const GRADE_RANK = {1: 100, 2: 90, 3: 80, 15: 70, 5: 60};
+const GRADE_LABEL = {1: 'G1', 2: 'G2', 3: 'G3', 15: 'L', 5: 'OP'};
+
+async function fetchVenues(date) {
+  const d = date.replace(/-/g, '');
+  const listHtml = await fetchHtml(`https://race.netkeiba.com/top/race_list_sub.html?kaisai_date=${d}`);
+  const venues = [];
+  for (const b of listHtml.split(/class="RaceList_DataTitle"/).slice(1)) {
+    const header = b.slice(0, 200).replace(/<[^>]*>/g, ' ');
+    const vname = Object.keys(VENUE_CODE).find(v => header.includes(v));
+    if (!vname) continue;
+    const races = [];
+    const seen = new Set();
+    for (const it of b.split(/<li /).slice(1)) {
+      const rid = it.match(/race_id=(\d{12})/)?.[1];
+      if (!rid) continue;
+      const num = parseInt(rid.slice(10, 12));
+      if (seen.has(num)) continue;
+      seen.add(num);
+      const title = (it.match(/class="ItemTitle">([^<]+)</)?.[1] || '').trim();
+      // グレードアイコンはレース名部分（RaceDataより手前）から取る
+      const grade = parseInt(it.split('class="RaceData"')[0].match(/Icon_GradeType(\d+)/)?.[1] || '') || null;
+      races.push({num, title, grade});
+    }
+    if (!races.length) continue;
+    const main = races.filter(r => GRADE_RANK[r.grade]).sort((a, b) => GRADE_RANK[b.grade] - GRADE_RANK[a.grade])[0]
+      || races.find(r => r.num === 11) || races[races.length - 1];
+    venues.push({
+      venue: vname,
+      race_count: races.length,
+      main_num: main.num,
+      main_name: main.title,
+      main_grade: GRADE_LABEL[main.grade] || null,
+      main_rank: GRADE_RANK[main.grade] || 0,
+    });
+  }
+  if (!venues.length) throw new Error(`${date} は開催がありません`);
+  return { venues };
+}
 
 // netkeibaから出馬表・過去走・単勝オッズを取得
 // （JRA公式はbot対策で非ブラウザからのアクセスを全面拒否するため）
@@ -95,13 +168,14 @@ function parseShutuba(html) {
     if (!num || !name) continue;
     horses.push({
       num, waku: waku || Math.ceil(num / 2), name, jockey, horseId,
-      p1: null, p2: null, p3: null, age3f: null, odds: null, ninki: null,
+      p1: null, p2: null, p3: null, p4: null, p5: null,
+      age3f: null, odds: null, ninki: null, sire: null,
     });
   }
   return horses;
 }
 
-// 過去走ページ：直近3走の着順と前走の上がり3Fを馬IDで結合
+// 過去走ページ：直近5走の着順・前走の上がり3F・父（産駒）を馬IDで結合
 function mergePast(horses, html) {
   if (!html) return;
   const byId = {};
@@ -109,18 +183,20 @@ function mergePast(horses, html) {
     const r = m[0];
     const hid = r.match(/db\.netkeiba\.com\/horse\/(\d+)/)?.[1];
     if (!hid) continue;
-    byId[hid] = [...r.matchAll(/<td class="Past[\s\S]*?(?=<td class="Past|<\/tr>)/g)].map(c => ({
-      rank: parseInt(c[0].match(/class="Num">(\d+)</)?.[1] || '') || null,
-      agari: parseFloat(c[0].match(/\((\d{2}\.\d)\)/)?.[1] || '') || null,
-    }));
+    byId[hid] = {
+      sire: (r.match(/class="Horse01[^"]*">([^<]+)</)?.[1] || '').trim() || null,
+      past: [...r.matchAll(/<td class="Past[\s\S]*?(?=<td class="Past|<\/tr>)/g)].map(c => ({
+        rank: parseInt(c[0].match(/class="Num">(\d+)</)?.[1] || '') || null,
+        agari: parseFloat(c[0].match(/\((\d{2}\.\d)\)/)?.[1] || '') || null,
+      })),
+    };
   }
   for (const h of horses) {
-    const past = h.horseId && byId[h.horseId];
-    if (!past) continue;
-    h.p1 = past[0]?.rank ?? null;
-    h.p2 = past[1]?.rank ?? null;
-    h.p3 = past[2]?.rank ?? null;
-    h.age3f = past[0]?.agari ?? null;
+    const info = h.horseId && byId[h.horseId];
+    if (!info) continue;
+    h.sire = info.sire;
+    [h.p1, h.p2, h.p3, h.p4, h.p5] = [0, 1, 2, 3, 4].map(i => info.past[i]?.rank ?? null);
+    h.age3f = info.past[0]?.agari ?? null;
   }
 }
 

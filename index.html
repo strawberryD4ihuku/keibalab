@@ -194,9 +194,9 @@
       <div class="card">
         <div class="card-title">📅 レース選択</div>
         <div class="race-grid">
-          <div class="field"><label>開催場所</label><select id="venue"><option>東京</option><option>中山</option><option>阪神</option><option>京都</option><option>札幌</option><option>函館</option><option>福島</option><option>新潟</option><option>中京</option><option>小倉</option></select></div>
-          <div class="field"><label>日付</label><input type="date" id="race-date"></div>
-          <div class="field"><label>レース番号</label><select id="race-num"><option>1R</option><option>2R</option><option>3R</option><option>4R</option><option>5R</option><option>6R</option><option>7R</option><option>8R</option><option>9R</option><option selected>10R</option><option>11R</option><option>12R</option></select></div>
+          <div class="field"><label>日付（開催日のみ）</label><select id="race-date" onchange="loadVenues()"><option value="">読み込み中...</option></select></div>
+          <div class="field"><label>開催場所</label><select id="venue" onchange="applyMainRace()"></select></div>
+          <div class="field"><label>レース番号</label><select id="race-num" onchange="document.getElementById('race-name').value=''"><option>1R</option><option>2R</option><option>3R</option><option>4R</option><option>5R</option><option>6R</option><option>7R</option><option>8R</option><option>9R</option><option>10R</option><option selected>11R</option><option>12R</option></select></div>
           <div class="field"><label>レース名</label><input type="text" id="race-name" placeholder="エプソムC G3"></div>
         </div>
         <div style="margin-top:10px;display:flex;align-items:center;gap:12px">
@@ -222,7 +222,7 @@
         <div class="table-wrap">
           <table>
             <thead><tr>
-              <th>選</th><th>枠</th><th>馬番</th><th>馬名</th><th>騎手</th><th>前走</th><th>2走前</th><th>3走前</th><th>上がり3F</th><th>オッズ</th><th>参考スコア</th>
+              <th>選</th><th>枠</th><th>馬番</th><th>馬名</th><th>騎手</th><th>前走</th><th>2走前</th><th>3走前</th><th>4走前</th><th>5走前</th><th>上がり3F</th><th>オッズ</th><th>参考スコア</th>
             </tr></thead>
             <tbody id="uma-tbody"></tbody>
           </table>
@@ -355,9 +355,72 @@ sb.auth.onAuthStateChange(async (event, session) => {
 
 // App init
 function initApp() {
-  const today = new Date().toISOString().split('T')[0];
-  document.getElementById('race-date').value = today;
   renderTable();
+  loadKaisai();
+}
+
+// APIヘルパー
+async function apiGet(params) {
+  const res = await fetch(`${EDGE_FUNC_URL}?${new URLSearchParams(params)}`, {
+    headers: { 'Authorization': `Bearer ${SUPABASE_KEY}` }
+  });
+  const json = await res.json();
+  if (json.error) throw new Error(json.error);
+  return json;
+}
+
+let kaisaiDates = [];
+let venueInfo = [];
+
+// 開催日プルダウン（今月＋来月の実開催日のみ）
+async function loadKaisai() {
+  const dateSel = document.getElementById('race-date');
+  try {
+    const json = await apiGet({action: 'kaisai'});
+    kaisaiDates = json.dates || [];
+    if (!kaisaiDates.length) throw new Error('開催日が取得できませんでした');
+    const today = new Date().toISOString().split('T')[0];
+    // 今日以降の最初の開催日をデフォルトに
+    const def = kaisaiDates.find(d => d.date >= today) || kaisaiDates[kaisaiDates.length - 1];
+    dateSel.innerHTML = kaisaiDates.map(d => {
+      const dt = new Date(d.date + 'T00:00:00');
+      const label = `${dt.getMonth()+1}/${dt.getDate()}(${'日月火水木金土'[dt.getDay()]}) ${d.venues.join('・')}${d.graded.length ? ' ★' + d.graded.join('・') : ''}`;
+      return `<option value="${d.date}" ${d === def ? 'selected' : ''}>${esc(label)}</option>`;
+    }).join('');
+    await loadVenues();
+  } catch (e) {
+    dateSel.innerHTML = '<option value="">取得失敗</option>';
+    showToast('開催日の取得失敗: ' + e.message);
+  }
+}
+
+// 選択した日に開催中の競馬場だけを選択肢にする
+async function loadVenues() {
+  const date = document.getElementById('race-date').value;
+  const venueSel = document.getElementById('venue');
+  if (!date) return;
+  venueSel.innerHTML = '<option value="">読み込み中...</option>';
+  try {
+    const json = await apiGet({action: 'venues', date});
+    venueInfo = json.venues || [];
+    // メインレースのグレードが最も高い場をデフォルトに
+    const def = [...venueInfo].sort((a, b) => b.main_rank - a.main_rank)[0];
+    venueSel.innerHTML = venueInfo.map(v =>
+      `<option value="${esc(v.venue)}" ${v === def ? 'selected' : ''}>${esc(v.venue)}${v.main_grade ? `（${esc(v.main_grade)} ${esc(v.main_name)}）` : ''}</option>`
+    ).join('');
+    applyMainRace();
+  } catch (e) {
+    venueSel.innerHTML = '';
+    showToast('開催場の取得失敗: ' + e.message);
+  }
+}
+
+// その場のメインレースをレース番号・レース名のデフォルトにする
+function applyMainRace() {
+  const v = venueInfo.find(x => x.venue === document.getElementById('venue').value);
+  if (!v) return;
+  document.getElementById('race-num').value = v.main_num + 'R';
+  document.getElementById('race-name').value = v.main_name || '';
 }
 
 // JRAからデータ取得
@@ -389,9 +452,8 @@ async function fetchRaceData() {
     renderTable();
     document.getElementById('yoso-result').style.display = 'none';
     document.getElementById('bet-form').style.display = 'none';
-    // レース名が取れたら自動入力（手入力済みなら上書きしない）
-    const nameInput = document.getElementById('race-name');
-    if (json.race_name && !nameInput.value) nameInput.value = json.race_name;
+    // 実際のレース名で上書き（サーバーが正しい名前を知っている）
+    if (json.race_name) document.getElementById('race-name').value = json.race_name;
     status.textContent = `✅ ${horses.length}頭取得（${venue} ${raceNum}R${json.race_name ? ' ' + json.race_name : ''}）`;
   } catch (e) {
     status.textContent = `❌ ${e.message}`;
@@ -441,13 +503,13 @@ function hashStr(s) {
   return Math.abs(h);
 }
 
-// 参考スコア：取得できたデータ（オッズ・近走着順・上がり3F）を使い、
+// 参考スコア：取得できたデータ（オッズ・直近5走の着順・上がり3F）を使い、
 // 欠損分は軸ごとの決定的なゆらぎで補完する簡易ヒューリスティック
 function computeScore(h) {
   let score = 50;
   if (h.odds) score += Math.max(-15, 28 - Math.log(h.odds) * 9);   // 人気馬ほど加点
-  [[h.p1, 3], [h.p2, 2], [h.p3, 1]].forEach(([p, w]) => {
-    if (p) score += Math.max(0, 6 - p) * w;
+  [[h.p1, 3], [h.p2, 2.5], [h.p3, 2], [h.p4, 1.5], [h.p5, 1]].forEach(([p, w]) => {
+    if (p) score += Math.max(0, 6 - p) * w * 0.7;   // 新しい走ほど重視
   });
   if (h.age3f) score += Math.max(0, (36 - h.age3f) * 6);
   score += hashStr(h.name + currentAxis) % 11 - 5;
@@ -457,7 +519,7 @@ function computeScore(h) {
 function renderTable() {
   const tbody = document.getElementById('uma-tbody');
   if (!horses.length) {
-    tbody.innerHTML = '<tr><td colspan="11" class="empty">出走データがありません。「🔄 出馬表を取得」を押して読み込んでください</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="13" class="empty">出走データがありません。「🔄 出馬表を取得」を押して読み込んでください</td></tr>';
     return;
   }
   horses.forEach(h => { h.score = computeScore(h); });
@@ -469,11 +531,13 @@ function renderTable() {
       <td><span style="color:${sel?'var(--accent)':'var(--text3)'}">●</span></td>
       <td><span class="waku-num" style="background:${wk.bg};color:${wk.fg}">${h.waku}</span></td>
       <td><strong>${h.num}</strong></td>
-      <td style="text-align:left;font-weight:500">${esc(h.name)}</td>
+      <td style="text-align:left;font-weight:500">${esc(h.name)}${currentAxis === '血統' && h.sire ? `<div style="font-size:11px;font-weight:400;color:var(--gold)">${esc(h.sire)}産駒</div>` : ''}</td>
       <td style="color:var(--text2)">${esc(h.jockey)}</td>
       <td>${fmtRank(h.p1)}</td>
       <td>${fmtRank(h.p2)}</td>
       <td>${fmtRank(h.p3)}</td>
+      <td>${fmtRank(h.p4)}</td>
+      <td>${fmtRank(h.p5)}</td>
       <td style="color:var(--text2)">${h.age3f ?? '–'}</td>
       <td style="color:var(--accent);font-weight:500;white-space:nowrap">${h.odds ? esc(h.odds)+'倍' : '–'}${h.ninki ? `<span style="color:var(--text3);font-size:11px;font-weight:400"> ${esc(h.ninki)}人気</span>` : ''}</td>
       <td><span class="ai-score ${scoreClass(h.score)}">${h.score}点</span></td>
@@ -504,7 +568,8 @@ function generateYoso() {
     '<span style="font-size:12px;color:var(--text3)">対抗馬なし（選択頭数が少ないため）</span>';
 
   const poolDesc = useSelection ? `選択した${pool.length}頭` : `全${pool.length}頭`;
-  let comment = `${currentAxis}軸スコア順（${poolDesc}から）。◎${top.name}が${top.score}点で最上位`;
+  const sireNote = currentAxis === '血統' && top.sire ? `（${top.sire}産駒）` : '';
+  let comment = `${currentAxis}軸スコア順（${poolDesc}から）。◎${top.name}${sireNote}が${top.score}点で最上位`;
   if (sorted[1]) comment += `、○${sorted[1].name}（${sorted[1].score}点）が対抗`;
   comment += '。';
   document.getElementById('yoso-comment').textContent = comment;
