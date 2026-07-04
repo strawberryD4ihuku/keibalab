@@ -173,6 +173,7 @@
       <svg width="18" height="18" viewBox="0 0 18 18" style="vertical-align:middle;margin-right:8px"><path fill="#4285F4" d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844c-.209 1.125-.843 2.078-1.796 2.717v2.258h2.908c1.702-1.567 2.684-3.875 2.684-6.615z"/><path fill="#34A853" d="M9 18c2.43 0 4.467-.806 5.956-2.184l-2.908-2.258c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332A8.997 8.997 0 0 0 9 18z"/><path fill="#FBBC05" d="M3.964 10.707A5.41 5.41 0 0 1 3.682 9c0-.593.102-1.17.282-1.707V4.961H.957A8.996 8.996 0 0 0 0 9c0 1.452.348 2.827.957 4.039l3.007-2.332z"/><path fill="#EA4335" d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0A8.997 8.997 0 0 0 .957 4.961L3.964 7.293C4.672 5.163 6.656 3.58 9 3.58z"/></svg>
       Googleでログイン
     </button>
+    <div id="inapp-warn" style="display:none;font-size:11px;color:var(--gold);margin-top:8px;line-height:1.5">⚠️ アプリ内ブラウザではGoogleログインが使えないことがあります。SafariやChromeで開き直すか、下のメール登録をご利用ください。</div>
     <div class="auth-divider">または メールアドレスで</div>
     <div class="form-group"><label>メールアドレス</label><input type="email" id="auth-email" placeholder="mail@example.com" autocomplete="email"></div>
     <div class="form-group"><label>パスワード（6文字以上）</label><input type="password" id="auth-password" autocomplete="current-password" onkeydown="if(event.key==='Enter')doEmailLogin()"></div>
@@ -310,7 +311,10 @@ const SUPABASE_KEY = 'sb_publishable_PbCRa6F27FbYICKu0oGFvQ_c3e4kb49';
 const LOCAL_MODE = ['localhost', '127.0.0.1'].includes(location.hostname);
 const EDGE_FUNC_URL = LOCAL_MODE ? `${location.origin}/race-data` : `${SUPABASE_URL}/functions/v1/race-data`;
 const { createClient } = supabase;
-const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
+// PKCEフロー：モバイルブラウザでもOAuthリダイレクト後のセッション復元が安定する
+const sb = createClient(SUPABASE_URL, SUPABASE_KEY, {
+  auth: { flowType: 'pkce', detectSessionInUrl: true, persistSession: true, autoRefreshToken: true }
+});
 
 let currentUser = null;
 let currentProfile = null;
@@ -342,9 +346,10 @@ function esc(s) {
 async function doGoogleLogin() {
   const {error} = await sb.auth.signInWithOAuth({
     provider: 'google',
-    options: { redirectTo: window.location.href }
+    // hashやクエリの残骸を含まないクリーンなURLに戻す
+    options: { redirectTo: location.origin + location.pathname }
   });
-  if (error) { document.getElementById('auth-error').textContent = 'ログイン失敗：' + error.message; }
+  if (error) { authError('ログイン失敗：' + error.message); }
 }
 
 function authError(msg) { document.getElementById('auth-error').textContent = msg; }
@@ -360,50 +365,129 @@ function jpAuthError(error) {
   return 'エラー: ' + m;
 }
 
-async function doEmailLogin() {
-  const email = document.getElementById('auth-email').value.trim();
-  const password = document.getElementById('auth-password').value;
-  if (!email || !password) { authError('メールアドレスとパスワードを入力してください'); return; }
-  authError('');
-  const {error} = await sb.auth.signInWithPassword({email, password});
-  if (error) authError(jpAuthError(error));
+// supabase-jsは起動時のセッション復元・リフレッシュ中に内部ロックを握るため、
+// その間の認証呼び出しは待たされる（古い無効セッションがあると特に長い）。
+// 初期化完了を待ってから実行し、それでも固まる場合はタイムアウトで通知する。
+const authInit = sb.auth.getSession().catch(() => {});
+
+function withTimeout(promise, ms) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), ms)),
+  ]);
 }
 
-async function doEmailSignup() {
+function setAuthBusy(busy) {
+  document.querySelectorAll('.auth-actions .btn').forEach(b => {
+    b.disabled = busy;
+    b.style.opacity = busy ? '0.5' : '';
+  });
+}
+
+async function doEmailAuth(mode) {
   const email = document.getElementById('auth-email').value.trim();
   const password = document.getElementById('auth-password').value;
-  const name = document.getElementById('auth-name').value.trim();
   if (!email || !password) { authError('メールアドレスとパスワードを入力してください'); return; }
-  if (password.length < 6) { authError('パスワードは6文字以上にしてください'); return; }
-  authError('');
-  const {error} = await sb.auth.signUp({
-    email, password,
-    options: { data: { full_name: name || email.split('@')[0] } },
-  });
-  if (error) { authError(jpAuthError(error)); return; }
-  // 自動確認が有効なのでセッションが即発行され、onAuthStateChangeで画面遷移する
+  if (mode === 'signup' && password.length < 6) { authError('パスワードは6文字以上にしてください'); return; }
+  authError(mode === 'signup' ? '登録中...' : 'ログイン中...');
+  setAuthBusy(true);
+  try {
+    await withTimeout(authInit, 8000).catch(() => {});   // 初期化が固まっていても8秒で先へ進む
+    const call = mode === 'signup'
+      ? sb.auth.signUp({
+          email, password,
+          options: { data: { full_name: document.getElementById('auth-name').value.trim() || email.split('@')[0] } },
+        })
+      : sb.auth.signInWithPassword({email, password});
+    const {data, error} = await withTimeout(call, 15000);
+    if (error) { authError(jpAuthError(error)); return; }
+    authError('');
+    if (data?.session) handleSession(data.session);   // イベントを待たず直接遷移
+    else authError('登録は完了しましたが自動ログインできませんでした。「ログイン」を押してください');
+  } catch (e) {
+    authError('通信がタイムアウトしました。電波の良い場所でもう一度お試しください');
+  } finally {
+    setAuthBusy(false);
+  }
 }
+
+function doEmailLogin() { doEmailAuth('login'); }
+function doEmailSignup() { doEmailAuth('signup'); }
 
 async function doLogout() {
   await sb.auth.signOut();
-  document.getElementById('app').style.display = 'none';
-  document.getElementById('auth-screen').style.display = 'flex';
 }
 
-sb.auth.onAuthStateChange(async (event, session) => {
-  if (session?.user) {
-    currentUser = session.user;
+let initializedUserId = null;
+
+// セッション確定後の画面遷移と初期化。
+// 先に画面を切り替えてから、プロフィール読み込みは裏で行う
+// （通信待ちでログインフォームに固まったように見えるのを防ぐ）
+async function handleSession(session) {
+  if (!session?.user) return;
+  currentUser = session.user;
+  if (initializedUserId === session.user.id) return;   // 同一ユーザーの再イベントは無視
+  initializedUserId = session.user.id;
+
+  // OAuthリダイレクト後のURLに残るcode/tokenを消す
+  if (location.search.includes('code=') || location.hash.includes('access_token=')) {
+    history.replaceState(null, '', location.pathname);
+  }
+
+  document.getElementById('user-display').textContent = currentUser.email || '';
+  document.getElementById('auth-screen').style.display = 'none';
+  const app = document.getElementById('app');
+  app.style.display = 'flex';
+  app.style.flexDirection = 'column';
+  initApp();
+
+  try {
     const name = currentUser.user_metadata?.full_name || currentUser.email.split('@')[0];
     await sb.from('profiles').upsert({id: currentUser.id, display_name: name}, {onConflict: 'id', ignoreDuplicates: true});
     const {data} = await sb.from('profiles').select('*').eq('id', currentUser.id).maybeSingle();
     currentProfile = data;
-    document.getElementById('user-display').textContent = (data?.display_name || currentUser.email);
-    document.getElementById('auth-screen').style.display = 'none';
-    document.getElementById('app').style.display = 'flex';
-    document.getElementById('app').style.flexDirection = 'column';
-    initApp();
+    if (data?.display_name) document.getElementById('user-display').textContent = data.display_name;
+  } catch (e) { /* プロフィール取得失敗でもアプリは使える */ }
+}
+
+// 注意: supabase-jsはonAuthStateChangeコールバック内で別のSupabase API呼び出しを
+// awaitするとデッドロックすることがある（内部ロックを保持したまま同じロックを待つ。
+// 特にモバイルSafariで発生）。setTimeoutでコールバックの外に出してから処理する。
+sb.auth.onAuthStateChange((event, session) => {
+  if (event === 'SIGNED_OUT') {
+    initializedUserId = null;
+    currentUser = null;
+    currentProfile = null;
+    document.getElementById('app').style.display = 'none';
+    document.getElementById('auth-screen').style.display = 'flex';
+    return;
+  }
+  if (session) setTimeout(() => handleSession(session), 0);
+});
+
+// ログイン画面表示中のJSエラーを見えるようにする（モバイルでの原因調査用）
+window.addEventListener('error', (e) => {
+  if (!initializedUserId) {
+    const el = document.getElementById('auth-error');
+    if (el) el.textContent = 'エラーが発生しました：' + (e.message || '不明なエラー');
   }
 });
+
+// アプリ内ブラウザ（LINE・Instagram等）はGoogleのOAuthをブロックするため注意書きを出す
+if (/Line\/|FBAN|FBAV|Instagram|Twitter/i.test(navigator.userAgent)) {
+  const warn = document.getElementById('inapp-warn');
+  if (warn) warn.style.display = 'block';
+}
+
+// OAuthリダイレクトで返ってきたエラー（?error_description=... または #error_description=...）を表示
+{
+  const params = new URLSearchParams(location.search.slice(1) || location.hash.slice(1));
+  const desc = params.get('error_description') || params.get('error');
+  if (desc) {
+    authError('ログインできませんでした：' + desc.replace(/\+/g, ' '));
+    history.replaceState(null, '', location.pathname);
+  }
+}
 
 // App init
 function initApp() {
