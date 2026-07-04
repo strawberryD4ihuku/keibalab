@@ -57,7 +57,7 @@
   .nav-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
   .topbar-right { display: flex; align-items: center; gap: 12px; }
   .user-info { font-size: 12px; color: var(--text2); }
-  .logout-btn { font-size: 12px; color: var(--text3); cursor: pointer; padding: 4px 8px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: none; color: var(--text2); transition: all 0.15s; }
+  .logout-btn { font-size: 12px; color: var(--text3); cursor: pointer; padding: 4px 8px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: none; color: var(--text2); transition: all 0.15s; white-space: nowrap; flex-shrink: 0; }
   .logout-btn:hover { border-color: var(--border2); color: var(--text); }
 
   .main { flex: 1; padding: 1.5rem; max-width: 1100px; margin: 0 auto; width: 100%; }
@@ -91,7 +91,7 @@
   tr:hover td { background: rgba(255,255,255,0.02); }
   tr.selected td { background: rgba(79,142,247,0.07); }
   .waku-num { width: 24px; height: 24px; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; border: 1px solid var(--border2); }
-  .rank-badge { padding: 2px 7px; border-radius: 4px; font-size: 11px; font-weight: 500; }
+  .rank-badge { padding: 2px 7px; border-radius: 4px; font-size: 11px; font-weight: 500; white-space: nowrap; display: inline-block; }
   .r1 { background: rgba(240,192,64,0.2); color: var(--gold); }
   .r2 { background: rgba(62,207,142,0.15); color: var(--green); }
   .r3 { background: rgba(79,142,247,0.15); color: var(--accent); }
@@ -150,13 +150,25 @@
   .bet-horses { font-size: 11px; color: var(--text3); white-space: nowrap; }
 
   @media (max-width: 640px) {
-    .topbar { padding: 0 0.75rem; gap: 8px; overflow-x: auto; }
-    .topbar > div:first-child { gap: 10px; }
-    .nav-btn { padding: 0 0.6rem; white-space: nowrap; }
+    .topbar { padding: 0 0.6rem; gap: 6px; }
+    .topbar > div:first-child { gap: 8px; min-width: 0; }
+    .topbar-right { flex-shrink: 0; gap: 6px; }
+    .logo { font-size: 13px; white-space: nowrap; }
+    .nav { overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
+    .nav::-webkit-scrollbar { display: none; }
+    .nav-btn { padding: 0 0.5rem; white-space: nowrap; font-size: 12px; gap: 4px; }
+    .nav-long { display: none; }
+    .logout-btn { font-size: 11px; padding: 4px 6px; }
     .user-info { display: none; }
     .main { padding: 0.75rem; }
-    th, td { padding: 6px 6px; }
+    .card { padding: 0.9rem; }
+    table { font-size: 12px; }
+    th, td { padding: 6px 4px; }
+    .waku-num { width: 20px; height: 20px; font-size: 11px; }
+    .rank-badge { padding: 2px 4px; font-size: 10px; }
     .bet-row { flex-wrap: wrap; }
+    .yoso-actions { gap: 8px; }
+    .btn-yoso, .btn-save { width: 100%; }
   }
 </style>
 </head>
@@ -193,9 +205,9 @@
     <div style="display:flex;align-items:center;gap:20px">
       <div class="logo">🏇 KeibaLab</div>
       <nav class="nav">
-        <div class="nav-btn active" onclick="showPage('yoso')">📋 予想</div>
-        <div class="nav-btn" onclick="showPage('stats')">📊 収支・成績</div>
-        <div class="nav-btn" onclick="showPage('bets')">📝 購入履歴</div>
+        <div class="nav-btn active" onclick="showPage('yoso')"><span>📋 予想</span></div>
+        <div class="nav-btn" onclick="showPage('stats')"><span>📊 収支<span class="nav-long">・成績</span></span></div>
+        <div class="nav-btn" onclick="showPage('bets')"><span>📝 <span class="nav-long">購入</span>履歴</span></div>
       </nav>
     </div>
     <div class="topbar-right">
@@ -212,7 +224,7 @@
         <div class="race-grid">
           <div class="field"><label>日付（開催日のみ）</label><select id="race-date" onchange="loadVenues()"><option value="">読み込み中...</option></select></div>
           <div class="field"><label>開催場所</label><select id="venue" onchange="applyMainRace()"></select></div>
-          <div class="field"><label>レース番号</label><select id="race-num" onchange="document.getElementById('race-name').value=''"><option>1R</option><option>2R</option><option>3R</option><option>4R</option><option>5R</option><option>6R</option><option>7R</option><option>8R</option><option>9R</option><option>10R</option><option selected>11R</option><option>12R</option></select></div>
+          <div class="field"><label>レース番号（発走時刻）</label><select id="race-num" onchange="applyRaceSelection()"><option>1R</option><option>2R</option><option>3R</option><option>4R</option><option>5R</option><option>6R</option><option>7R</option><option>8R</option><option>9R</option><option>10R</option><option selected>11R</option><option>12R</option></select></div>
           <div class="field"><label>レース名</label><input type="text" id="race-name" placeholder="エプソムC G3"></div>
         </div>
         <div style="margin-top:10px;display:flex;align-items:center;gap:12px">
@@ -234,7 +246,7 @@
       </div>
 
       <div class="card">
-        <div class="card-title">📊 馬柱 <span style="color:var(--text3);font-weight:400;margin-left:4px">（2頭以上選択すると、その中から予想します）</span></div>
+        <div class="card-title"><span style="white-space:nowrap">📊 馬柱</span> <span style="color:var(--text3);font-weight:400;margin-left:4px">（2頭以上選択すると、その中から予想します）</span></div>
         <div class="table-wrap">
           <table>
             <thead><tr>
@@ -555,8 +567,31 @@ async function loadVenues() {
 function applyMainRace() {
   const v = venueInfo.find(x => x.venue === document.getElementById('venue').value);
   if (!v) return;
-  document.getElementById('race-num').value = v.main_num + 'R';
+  // レース番号の選択肢を「11R 15:45 ★レース名」形式で再構築
+  const raceSel = document.getElementById('race-num');
+  if (v.races?.length) {
+    raceSel.innerHTML = v.races.map(r => {
+      const label = `${r.num}R${r.time ? ' ' + r.time : ''}${r.grade ? ` ★${r.title}(${r.grade})` : ''}`;
+      return `<option value="${r.num}R">${esc(label)}</option>`;
+    }).join('');
+  }
+  raceSel.value = v.main_num + 'R';
   document.getElementById('race-name').value = v.main_name || '';
+}
+
+// レース番号を変えたらレース名も追従させる
+function applyRaceSelection() {
+  const v = venueInfo.find(x => x.venue === document.getElementById('venue').value);
+  const num = parseInt(document.getElementById('race-num').value);
+  const r = v?.races?.find(x => x.num === num);
+  document.getElementById('race-name').value = r?.title || '';
+}
+
+// 選択中レースの発走時刻（表示用）
+function selectedRaceTime() {
+  const v = venueInfo.find(x => x.venue === document.getElementById('venue').value);
+  const num = parseInt(document.getElementById('race-num').value);
+  return v?.races?.find(x => x.num === num)?.time || null;
 }
 
 // JRAからデータ取得
@@ -590,7 +625,8 @@ async function fetchRaceData() {
     document.getElementById('bet-form').style.display = 'none';
     // 実際のレース名で上書き（サーバーが正しい名前を知っている）
     if (json.race_name) document.getElementById('race-name').value = json.race_name;
-    status.textContent = `✅ ${horses.length}頭取得（${venue} ${raceNum}R${json.race_name ? ' ' + json.race_name : ''}）`;
+    const time = selectedRaceTime();
+    status.textContent = `✅ ${horses.length}頭取得（${venue}${raceNum}R${json.race_name ? ' ' + json.race_name : ''}${time ? ' ／ ' + time + '発走' : ''}）`;
   } catch (e) {
     status.textContent = `❌ ${e.message}`;
     showToast('データ取得失敗: ' + e.message);
@@ -667,8 +703,8 @@ function renderTable() {
       <td><span style="color:${sel?'var(--accent)':'var(--text3)'}">●</span></td>
       <td><span class="waku-num" style="background:${wk.bg};color:${wk.fg}">${h.waku}</span></td>
       <td><strong>${h.num}</strong></td>
-      <td style="text-align:left;font-weight:500">${esc(h.name)}${currentAxis === '血統' && h.sire ? `<div style="font-size:11px;font-weight:400;color:var(--gold)">${esc(h.sire)}産駒</div>` : ''}</td>
-      <td style="color:var(--text2)">${esc(h.jockey)}</td>
+      <td style="text-align:left;font-weight:500;white-space:nowrap">${esc(h.name)}${currentAxis === '血統' && h.sire ? `<div style="font-size:11px;font-weight:400;color:var(--gold)">${esc(h.sire)}産駒</div>` : ''}</td>
+      <td style="color:var(--text2);white-space:nowrap">${esc(h.jockey)}</td>
       <td>${fmtRank(h.p1)}</td>
       <td>${fmtRank(h.p2)}</td>
       <td>${fmtRank(h.p3)}</td>
