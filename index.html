@@ -131,6 +131,12 @@
   .m-name { font-size: 13px; font-weight: 500; }
   .m-stats { font-size: 11px; color: var(--text2); margin-top: 2px; }
   .m-balance { font-size: 13px; font-weight: 600; text-align: right; }
+  .m-hide-btn { font-size: 11px; color: var(--text3); background: none; border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 4px 8px; cursor: pointer; white-space: nowrap; flex-shrink: 0; transition: all 0.15s; }
+  .m-hide-btn:hover { border-color: var(--border2); color: var(--text2); }
+  .hidden-toggle { font-size: 12px; color: var(--text3); cursor: pointer; padding: 8px 0 2px; user-select: none; }
+  .hidden-toggle:hover { color: var(--text2); }
+  .hidden-members { display: none; flex-direction: column; gap: 10px; }
+  .hidden-members.open { display: flex; }
   .tend-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--border); }
   .tend-label { width: 60px; font-size: 13px; }
   .tend-bar-bg { flex: 1; background: var(--bg3); border-radius: 100px; height: 6px; overflow: hidden; }
@@ -893,7 +899,7 @@ async function loadStats() {
     }
   });
 
-  // メンバー比較
+  // メンバー比較（hidden=trueのメンバーは折りたたみへ。データは消えない）
   const {data: allProfiles} = await sb.from('profiles').select('*');
   const {data: allBets} = await sb.from('bets').select('*');
   const memberStats = (allProfiles||[]).map(p => {
@@ -902,6 +908,8 @@ async function loadStats() {
     const ret = pb.reduce((s,b)=>s+(b.return_amount||0),0);
     const h = pb.filter(b=>b.is_hit).length;
     return {
+      id: p.id,
+      hidden: !!p.hidden,
       name: p.display_name || '？',
       balance: ret - amt,
       hitRate: pb.length ? ((h/pb.length)*100).toFixed(1) : '0.0',
@@ -909,21 +917,30 @@ async function loadStats() {
     };
   }).sort((a,b)=>b.balance-a.balance);
 
-  const maxRec = Math.max(...memberStats.map(m=>parseInt(m.recovery)||0), 1);
-  document.getElementById('members-grid').innerHTML = memberStats.length ?
-    memberStats.map(m => `
-      <div class="member-row">
+  const visibleM = memberStats.filter(m => !m.hidden);
+  const hiddenM = memberStats.filter(m => m.hidden);
+  const memberRow = (m, isHidden) => `
+      <div class="member-row"${isHidden ? ' style="opacity:0.55"' : ''}>
         <div class="m-avatar">${esc(m.name[0])}</div>
         <div class="m-info">
-          <div class="m-name">${esc(m.name)}</div>
+          <div class="m-name">${esc(m.name)}${m.id === currentUser?.id ? ' <span style="font-size:10px;color:var(--text3)">(自分)</span>' : ''}</div>
           <div class="m-stats">的中率 ${m.hitRate}% ／ 回収率 ${m.recovery}%</div>
         </div>
         <div class="m-balance ${m.balance>=0?'green':'red'}">${m.balance>=0?'+':''}${m.balance.toLocaleString()}円</div>
-      </div>`).join('') : '<div class="empty">データなし</div>';
+        <button class="m-hide-btn" onclick="setMemberHidden('${m.id}', ${!isHidden})">${isHidden ? '表示に戻す' : '非表示'}</button>
+      </div>`;
 
-  // 傾向
+  document.getElementById('members-grid').innerHTML =
+    (visibleM.length ? visibleM.map(m => memberRow(m, false)).join('') : '<div class="empty">表示中のメンバーがいません</div>')
+    + (hiddenM.length ? `
+      <div class="hidden-toggle" onclick="document.getElementById('hidden-members').classList.toggle('open')">👁 非表示中のメンバー ${hiddenM.length}人（タップで開閉・データは残っています）</div>
+      <div id="hidden-members" class="hidden-members">${hiddenM.map(m => memberRow(m, true)).join('')}</div>` : '');
+
+  // 傾向（非表示メンバーの購入は集計から除外）
+  const hiddenIds = new Set(hiddenM.map(m => m.id));
+  const visibleBets = (allBets||[]).filter(b => !hiddenIds.has(b.user_id));
   const betTypes = {};
-  (allBets||[]).forEach(b => { betTypes[b.bet_type] = (betTypes[b.bet_type]||0)+1; });
+  visibleBets.forEach(b => { betTypes[b.bet_type] = (betTypes[b.bet_type]||0)+1; });
   const total = Object.values(betTypes).reduce((s,v)=>s+v,0)||1;
   const sorted = Object.entries(betTypes).sort((a,b)=>b[1]-a[1]);
   const colors = ['#4f8ef7','#3ecf8e','#7f77dd','#f0c040','#f05252','#888'];
@@ -931,6 +948,14 @@ async function loadStats() {
     const pct = Math.round(kv[1]/total*100);
     return `<div class="tend-row"><div class="tend-label">${esc(kv[0])}</div><div class="tend-bar-bg"><div class="tend-bar" style="width:${pct}%;background:${colors[i%colors.length]}"></div></div><div class="tend-pct">${pct}%</div></div>`;
   }).join('') || '<div class="empty">データなし</div>';
+}
+
+// メンバーの表示/非表示を切り替え（削除ではないのでいつでも戻せる）
+async function setMemberHidden(id, hidden) {
+  const {error} = await sb.rpc('set_member_hidden', {target: id, is_hidden: hidden});
+  if (error) { showToast('変更に失敗しました: ' + error.message); return; }
+  showToast(hidden ? 'メンバー比較から非表示にしました（データは残っています）' : '表示に戻しました');
+  loadStats();
 }
 
 // Bets history
