@@ -242,7 +242,7 @@
           <div class="pill" onclick="setAxis(this,'タイム')">⏱ タイム</div>
           <div class="pill" onclick="setAxis(this,'斤量')">⚖️ 斤量</div>
         </div>
-        <div class="axis-desc" id="axis-desc">馬柱軸：過去成績・着順・上がり3F・コース適性を総合評価してスコアリング</div>
+        <div class="axis-desc" id="axis-desc">馬柱軸：直近5走の着順＋直近10年の通算複勝率を中心に、オッズの市場評価も加味</div>
       </div>
 
       <div class="card">
@@ -250,7 +250,7 @@
         <div class="table-wrap">
           <table>
             <thead><tr>
-              <th>選</th><th>枠</th><th>馬番</th><th>馬名</th><th>騎手</th><th>前走</th><th>2走前</th><th>3走前</th><th>4走前</th><th>5走前</th><th>上がり3F</th><th>オッズ</th><th>参考スコア</th>
+              <th>選</th><th>枠</th><th>馬番</th><th>馬名</th><th>騎手</th><th>前走</th><th>2走前</th><th>3走前</th><th>4走前</th><th>5走前</th><th>通算<br><span style="font-weight:400">(10年)</span></th><th>上がり3F</th><th>オッズ</th><th>参考スコア</th>
             </tr></thead>
             <tbody id="uma-tbody"></tbody>
           </table>
@@ -607,7 +607,7 @@ async function fetchRaceData() {
   const btn = document.getElementById('fetch-btn');
   btn.disabled = true;
   btn.style.opacity = '0.5';
-  status.textContent = '取得中...';
+  status.textContent = '取得中...（各馬の過去成績を集計しています）';
   selectedHorses.clear();
 
   try {
@@ -649,11 +649,11 @@ function showPage(page) {
 
 // Axis
 const axisDescs = {
-  '馬柱': '馬柱軸：過去成績・着順・上がり3F・コース適性を総合評価してスコアリング',
-  '血統': '血統軸：父・母父の種牡馬特性、距離・馬場適性を重視してスコアリング',
-  '騎手': '騎手軸：騎手の当該コース勝率・近況の乗り鞍状態を最優先でスコアリング',
-  'タイム': 'タイム軸：過去走のタイム絶対値・レースペース・上がり順位を基準に評価',
-  '斤量': '斤量軸：斤量変化・馬体重・過去の斤量別成績から有利な馬を抽出',
+  '馬柱': '馬柱軸：直近5走の着順＋直近10年の通算複勝率を中心に、オッズの市場評価も加味',
+  '血統': '血統軸：今回と同じ馬場・距離（±200m）での過去実績＝コース適性を最重視（産駒表示つき）',
+  '騎手': '騎手軸：騎手の長期リーディング実績を最優先に、市場評価・近走成績を加味',
+  'タイム': 'タイム軸：前走の上がり3Fと同条件での過去実績を重視して評価',
+  '斤量': '斤量軸：今回の斤量の軽重を最重視し、近走・通算成績を加味',
 };
 function setAxis(el, name) {
   document.querySelectorAll('.pill').forEach(p => p.classList.remove('active'));
@@ -668,30 +668,79 @@ function rankClass(r) { return r===1?'r1':r===2?'r2':r===3?'r3':'r-other'; }
 function scoreClass(s) { return s>=85?'score-high':s>=65?'score-mid':'score-low'; }
 function fmtRank(r) { return r ? `<span class="rank-badge ${rankClass(r)}">${r}着</span>` : '<span style="color:var(--text3)">–</span>'; }
 
-// 軸ごとにスコアが変わる決定的な擬似乱数（同じ馬名＋軸なら常に同じ値）
+// 同点回避用の決定的なゆらぎ（同じ馬名＋軸なら常に同じ値）
 function hashStr(s) {
   let h = 0;
   for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
   return Math.abs(h);
 }
 
-// 参考スコア：取得できたデータ（オッズ・直近5走の着順・上がり3F）を使い、
-// 欠損分は軸ごとの決定的なゆらぎで補完する簡易ヒューリスティック
+// 長期リーディング上位騎手の目安レーティング（JRA公開の通年成績に基づく近似値）
+const JOCKEY_RATING = {
+  'ルメール': 95, 'モレイラ': 93, 'ムーア': 92, '川田': 92, 'ビュイック': 88,
+  '戸崎': 84, '横山武': 84, '坂井': 84, '武豊': 80, 'マーカンド': 80,
+  '松山': 78, '岩田望': 78, 'デムーロ': 76, '鮫島駿': 74, '佐々木': 74, '西村淳': 74,
+  '菅原明': 72, '田辺': 70, '北村友': 70, '藤岡佑': 70,
+  '横山和': 68, '三浦': 68, '浜中': 68, '団野': 68, '池添': 66,
+  '吉田隼': 64, '津村': 64, '丹内': 62, '幸': 62, '今村': 62,
+  '大野': 60, '和田竜': 60, '菱田': 58, '永島': 58, '荻野極': 56, '長岡': 56, '古川吉': 54,
+};
+function jockeyRating(name) {
+  if (!name || name === '—') return 50;
+  for (const k in JOCKEY_RATING) {
+    if (name.includes(k) || k.includes(name)) return JOCKEY_RATING[k];
+  }
+  return 50;
+}
+
+// 軸ごとの要素の重み
+const AXIS_WEIGHTS = {
+  '馬柱':   {form: 0.30, career: 0.25, market: 0.25, fit: 0.10, agari: 0.10},
+  '血統':   {fit: 0.40, career: 0.20, market: 0.20, form: 0.15, agari: 0.05},
+  '騎手':   {jockey: 0.35, market: 0.25, form: 0.20, career: 0.20},
+  'タイム': {agari: 0.35, fit: 0.20, form: 0.20, market: 0.15, career: 0.10},
+  '斤量':   {kinryo: 0.30, market: 0.25, form: 0.25, career: 0.20},
+};
+
+// 参考スコア：直近10年の実績データに基づく合成スコア
+// - market: 単勝オッズ→勝率換算（JRAの人気別勝率は10年単位でほぼ一定＝市場評価は最有力の予測因子）
+// - form:   直近5走の着順（新しい走ほど重く）
+// - career: 直近10年の通算複勝率（出走数が少ない馬は平均側へ縮小補正）
+// - fit:    今回と同じ馬場種別・距離±200mでの複勝率（コース適性）
+// - agari:  前走の上がり3F
+// - jockey: 騎手の長期リーディング実績
+// - kinryo: 今回の斤量の軽重
 function computeScore(h) {
-  let score = 50;
-  if (h.odds) score += Math.max(-15, 28 - Math.log(h.odds) * 9);   // 人気馬ほど加点
-  [[h.p1, 3], [h.p2, 2.5], [h.p3, 2], [h.p4, 1.5], [h.p5, 1]].forEach(([p, w]) => {
-    if (p) score += Math.max(0, 6 - p) * w * 0.7;   // 新しい走ほど重視
+  const c = h.career;
+  const comps = {
+    market: h.odds ? Math.min(100, Math.round(Math.sqrt(0.8 / h.odds) * 130)) : null,
+    career: c && c.n > 0 ? Math.min(100, Math.round((c.p3 + 2) / (c.n + 8) * 200)) : null,
+    fit: c && c.fitN > 0 ? Math.min(100, Math.round((c.fitP3 + 1.5) / (c.fitN + 6) * 200)) : null,
+    agari: h.age3f ? Math.max(0, Math.min(100, Math.round((37.5 - h.age3f) * 25))) : null,
+    jockey: jockeyRating(h.jockey),
+    kinryo: h.kinryo ? Math.max(0, Math.min(100, Math.round(50 + (56 - h.kinryo) * 12))) : null,
+    form: null,
+  };
+  let fs = 0, fw = 0;
+  [[h.p1, 5], [h.p2, 4], [h.p3, 3], [h.p4, 2], [h.p5, 1]].forEach(([p, w]) => {
+    if (p) { fs += Math.max(0, 9 - p) / 8 * w; fw += w; }
   });
-  if (h.age3f) score += Math.max(0, (36 - h.age3f) * 6);
-  score += hashStr(h.name + currentAxis) % 11 - 5;
+  if (fw) comps.form = Math.round(fs / fw * 100);
+
+  const W = AXIS_WEIGHTS[currentAxis] || AXIS_WEIGHTS['馬柱'];
+  let sum = 0, wsum = 0;
+  for (const k in W) {
+    if (comps[k] !== null) { sum += comps[k] * W[k]; wsum += W[k]; }
+  }
+  let score = wsum ? sum / wsum : 50;
+  score += hashStr(h.name + currentAxis) % 3 - 1;   // 同点回避（±1）
   return Math.min(99, Math.max(1, Math.round(score)));
 }
 
 function renderTable() {
   const tbody = document.getElementById('uma-tbody');
   if (!horses.length) {
-    tbody.innerHTML = '<tr><td colspan="13" class="empty">出走データがありません。「🔄 出馬表を取得」を押して読み込んでください</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="14" class="empty">出走データがありません。「🔄 出馬表を取得」を押して読み込んでください</td></tr>';
     return;
   }
   horses.forEach(h => { h.score = computeScore(h); });
@@ -710,6 +759,7 @@ function renderTable() {
       <td>${fmtRank(h.p3)}</td>
       <td>${fmtRank(h.p4)}</td>
       <td>${fmtRank(h.p5)}</td>
+      <td style="white-space:nowrap">${h.career?.n ? `${h.career.n}戦${h.career.w}勝${h.career.fitN ? `<div style="font-size:10px;color:var(--text3)">同条件 ${h.career.fitP3}/${h.career.fitN}</div>` : ''}` : '<span style="color:var(--text3)">–</span>'}</td>
       <td style="color:var(--text2)">${h.age3f ?? '–'}</td>
       <td style="color:var(--accent);font-weight:500;white-space:nowrap">${h.odds ? esc(h.odds)+'倍' : '–'}${h.ninki ? `<span style="color:var(--text3);font-size:11px;font-weight:400"> ${esc(h.ninki)}人気</span>` : ''}</td>
       <td><span class="ai-score ${scoreClass(h.score)}">${h.score}点</span></td>
@@ -741,8 +791,9 @@ function generateYoso() {
 
   const poolDesc = useSelection ? `選択した${pool.length}頭` : `全${pool.length}頭`;
   const sireNote = currentAxis === '血統' && top.sire ? `（${top.sire}産駒）` : '';
-  let comment = `${currentAxis}軸スコア順（${poolDesc}から）。◎${top.name}${sireNote}が${top.score}点で最上位`;
-  if (sorted[1]) comment += `、○${sorted[1].name}（${sorted[1].score}点）が対抗`;
+  const careerNote = top.career?.n ? `。直近10年${top.career.n}戦${top.career.w}勝${top.career.fitN ? `・同条件複勝${top.career.fitP3}/${top.career.fitN}` : ''}` : '';
+  let comment = `${currentAxis}軸スコア順（${poolDesc}から）。◎${top.name}${sireNote}が${top.score}点で最上位${careerNote}`;
+  if (sorted[1]) comment += `。○${sorted[1].name}（${sorted[1].score}点）が対抗`;
   comment += '。';
   document.getElementById('yoso-comment').textContent = comment;
 

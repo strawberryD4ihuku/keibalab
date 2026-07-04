@@ -153,8 +153,67 @@ async function fetchRaceData(venue, date, raceNum) {
   mergePast(horses, pastHtml);
   mergeOdds(horses, oddsJson);
 
+  // 今回レースの馬場・距離（コース適性の集計に使う）
+  const distM = shutubaHtml.match(/([芝ダ障])(\d{3,4})m/);
+  const surface = distM ? distM[1] : null;
+  const distance = distM ? parseInt(distM[2]) : null;
+
+  // 各馬の全戦績ページから直近10年の成績を集計
+  await mergeCareers(horses, venue, surface, distance);
+
   const raceName = (shutubaHtml.match(/<title>([^|<]+?)\s*出馬表/)?.[1] || '').trim();
-  return { horses, race_name: raceName, race_id: raceId };
+  return { horses, race_name: raceName, race_id: raceId, race_surface: surface, race_distance: distance };
+}
+
+// 各馬の戦績ページ（db.netkeiba.com/horse/result/{id}/）を並列取得して集計
+async function mergeCareers(horses, venue, surface, distance) {
+  const targets = horses.filter(h => h.horseId);
+  await mapLimit(targets, 5, async (h) => {
+    try {
+      const html = await fetchHtml(`https://db.netkeiba.com/horse/result/${h.horseId}/`);
+      h.career = parseCareer(html, venue, surface, distance);
+    } catch { h.career = null; }
+  });
+}
+
+// 戦績テーブルから直近10年分を集計：
+// 通算（n/w/p3）・同条件=同じ馬場種別かつ距離±200m（fit*）・同競馬場（venue*）
+function parseCareer(html, venue, surface, distance) {
+  const tbl = html.match(/class="db_h_race_results[\s\S]*?<\/table>/)?.[0] || '';
+  const rows = [...tbl.matchAll(/<tr[^>]*>[\s\S]*?<\/tr>/g)].slice(1);
+  const cutoff = Date.now() - 10 * 365.25 * 86400 * 1000;
+  const s = {n: 0, w: 0, p3: 0, fitN: 0, fitW: 0, fitP3: 0, venueN: 0, venueP3: 0};
+  for (const m of rows) {
+    const cells = [...m[0].matchAll(/<td[^>]*>([\s\S]*?)<\/td>/g)]
+      .map(c => c[1].replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').trim());
+    if (cells.length < 20) continue;
+    const d = new Date(cells[0].replace(/\//g, '-'));
+    if (isNaN(d.getTime()) || d.getTime() < cutoff) continue;
+    const rank = parseInt(cells[11]);
+    if (!rank) continue;   // 中止・除外・取消はスキップ
+    s.n++;
+    if (rank === 1) s.w++;
+    if (rank <= 3) s.p3++;
+    const dm = cells[14].match(/([芝ダ障])(\d{3,4})/);
+    if (dm && surface && dm[1] === surface && distance && Math.abs(parseInt(dm[2]) - distance) <= 200) {
+      s.fitN++;
+      if (rank === 1) s.fitW++;
+      if (rank <= 3) s.fitP3++;
+    }
+    if (venue && cells[1].includes(venue)) {
+      s.venueN++;
+      if (rank <= 3) s.venueP3++;
+    }
+  }
+  return s;
+}
+
+async function mapLimit(items, limit, fn) {
+  const queue = [...items];
+  const workers = Array.from({length: Math.min(limit, queue.length) || 1}, async () => {
+    while (queue.length) await fn(queue.shift());
+  });
+  await Promise.all(workers);
 }
 
 // 出馬表：枠・馬番・馬名・騎手・馬ID
@@ -169,11 +228,13 @@ function parseShutuba(html) {
                   r.match(/class="HorseName"[\s\S]*?<a[^>]*>\s*([^<]+?)\s*</)?.[1] || '').trim();
     const horseId = r.match(/db\.netkeiba\.com\/horse\/(\d+)/)?.[1] || null;
     const jockey = (r.match(/class="Jockey"[\s\S]*?<a[^>]*>\s*([^<]+?)\s*</)?.[1] || '—').trim();
+    // 斤量：性齢（Barei）セルの次のセルにある数値
+    const kinryo = parseFloat(r.match(/class="Barei[^"]*"[\s\S]*?<\/td>\s*<td[^>]*>\s*(\d{2}(?:\.\d)?)\s*</)?.[1]) || null;
     if (!num || !name) continue;
     horses.push({
-      num, waku: waku || Math.ceil(num / 2), name, jockey, horseId,
+      num, waku: waku || Math.ceil(num / 2), name, jockey, horseId, kinryo,
       p1: null, p2: null, p3: null, p4: null, p5: null,
-      age3f: null, odds: null, ninki: null, sire: null,
+      age3f: null, odds: null, ninki: null, sire: null, career: null,
     });
   }
   return horses;
