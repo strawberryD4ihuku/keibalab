@@ -107,6 +107,7 @@
   .yoso-mark { font-size: 12px; color: var(--text2); margin-bottom: 6px; }
   .yoso-horses { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
   .yoso-tag { background: var(--bg2); border: 1px solid var(--border2); border-radius: var(--radius-sm); padding: 4px 10px; font-size: 12px; }
+  .yoso-kaime { font-size: 13px; font-weight: 500; color: var(--gold); margin-top: 10px; padding: 8px 10px; background: rgba(240,192,64,0.08); border-radius: var(--radius-sm); }
   .yoso-comment { font-size: 12px; color: var(--text2); margin-top: 8px; }
 
   /* Save bet form */
@@ -263,7 +264,7 @@
         </div>
         <div class="yoso-actions">
           <div class="field"><label>買い方</label>
-            <select id="bet-type" style="width:auto">
+            <select id="bet-type" style="width:auto" onchange="if (document.getElementById('yoso-result').style.display !== 'none' && horses.length) generateYoso()">
               <option>単勝</option><option>複勝</option><option selected>馬連</option><option>馬単</option><option>ワイド</option><option>3連複</option><option>3連単</option>
             </select>
           </div>
@@ -272,8 +273,9 @@
         <div id="yoso-result" style="display:none" class="yoso-result">
           <div class="yoso-mark">◎ 本命</div>
           <div class="yoso-horses" id="honmei-area"></div>
-          <div class="yoso-mark">○ 対抗 / ▲ 単穴 / △ 連下</div>
+          <div class="yoso-mark" id="taikou-label">○ 対抗 / ▲ 単穴 / △ 連下</div>
           <div class="yoso-horses" id="taikou-area"></div>
+          <div class="yoso-kaime" id="yoso-kaime"></div>
           <div class="yoso-comment" id="yoso-comment"></div>
         </div>
 
@@ -339,6 +341,7 @@ let currentProfile = null;
 let currentAxis = '馬柱';
 let selectedHorses = new Set();
 let yosoHorses = [];
+let yosoPicks = [];
 let monthlyChart = null;
 
 // JRA公式の枠色（1白・2黒・3赤・4青・5黄・6緑・7橙・8桃）
@@ -779,27 +782,88 @@ function toggleHorse(num) {
 }
 
 // Yoso
+// 買い方ごとの設定：印の数と、序列の味付け
+// win   = 1着が必要な券種 → 勝率（勝ち切る力）を加点
+// place = 3着以内でよい券種 → 複勝率（安定感）を加点
+// mixed = 中間（馬連）
+const BET_CONFIG = {
+  '単勝':   {marks: ['◎'], style: 'win', need: 1},
+  '複勝':   {marks: ['◎', '○'], style: 'place', need: 1},
+  'ワイド': {marks: ['◎', '○', '▲'], style: 'place', need: 2},
+  '馬連':   {marks: ['◎', '○', '▲', '△'], style: 'mixed', need: 2},
+  '馬単':   {marks: ['◎', '○', '▲'], style: 'win', need: 2},
+  '3連複':  {marks: ['◎', '○', '▲', '△'], style: 'place', need: 3},
+  '3連単':  {marks: ['◎', '○', '▲', '△'], style: 'win', need: 3},
+};
+const MARK_LABELS = {'◎': '本命', '○': '対抗', '▲': '単穴', '△': '連下'};
+
+function kaimeText(betType, picks) {
+  const cfg = BET_CONFIG[betType];
+  if (picks.length < cfg.need) return `${betType}には最低${cfg.need + 1}頭必要です。選択を増やしてください`;
+  const n = i => picks[i] ? `${picks[i].num}番` : '';
+  switch (betType) {
+    case '単勝':   return `単勝 ${n(0)}（1点）`;
+    case '複勝':   return `複勝 ${n(0)} 本線${picks[1] ? `／押さえ ${n(1)}` : ''}`;
+    case 'ワイド': return `ワイド ${n(0)}-${n(1)} 本線${picks[2] ? `／${n(0)}-${n(2)} 押さえ（計2点）` : '（1点）'}`;
+    case '馬連':   return `馬連 ${n(0)}-${n(1)} 本線${picks[2] ? `／${n(0)}-${n(2)}${picks[3] ? `・${n(0)}-${n(3)}` : ''} 押さえ（計${Math.min(picks.length - 1, 3)}点）` : '（1点）'}`;
+    case '馬単':   return `馬単 ${n(0)}→${n(1)} 本線${picks[2] ? `／${n(0)}→${n(2)} 押さえ（計2点）` : '（1点）'}`;
+    case '3連複':  return `3連複 ${n(0)}-${n(1)}-${n(2)} 本線${picks[3] ? `／4頭BOX（計4点）` : '（1点）'}`;
+    case '3連単':  return `3連単 ${n(0)}→${n(1)}→${n(2)} 本線／◎軸マルチで押さえ`;
+  }
+  return '';
+}
+
 function generateYoso() {
   if (!horses.length) { showToast('先に「出馬表を取得」でデータを読み込んでください'); return; }
+
+  const betType = document.getElementById('bet-type').value;
+  const cfg = BET_CONFIG[betType] || BET_CONFIG['馬連'];
 
   // 2頭以上選択していればその中から、なければ全頭から
   const useSelection = selectedHorses.size >= 2;
   const pool = useSelection ? horses.filter(h => selectedHorses.has(h.num)) : horses;
-  const sorted = [...pool].sort((a,b) => b.score - a.score);
+
+  // 券種に合わせて序列を味付け（軸スコア＋勝率 or 複勝率ボーナス）
+  const betValue = h => {
+    let v = h.score;
+    const c = h.career;
+    if (c && c.n > 0) {
+      if (cfg.style === 'win') v += (c.w + 1) / (c.n + 10) * 40;
+      if (cfg.style === 'place') v += (c.p3 + 2) / (c.n + 8) * 30;
+    }
+    return v;
+  };
+  const sorted = [...pool].sort((a, b) => betValue(b) - betValue(a));
   yosoHorses = sorted;
+  const picks = sorted.slice(0, cfg.marks.length);
+  yosoPicks = picks;
 
   const tag = (mark, h) => `<span class="yoso-tag">${mark} ${h.num}番 ${esc(h.name)}${h.odds ? `（${esc(h.odds)}倍）` : ''}</span>`;
-  const top = sorted[0];
+  const top = picks[0];
   document.getElementById('honmei-area').innerHTML = tag('◎', top);
-  document.getElementById('taikou-area').innerHTML =
-    sorted.slice(1, 4).map((h,i) => tag(['○','▲','△'][i], h)).join('') ||
-    '<span style="font-size:12px;color:var(--text3)">対抗馬なし（選択頭数が少ないため）</span>';
+
+  const subMarks = cfg.marks.slice(1);
+  const taikouLabel = document.getElementById('taikou-label');
+  const taikouArea = document.getElementById('taikou-area');
+  if (subMarks.length) {
+    taikouLabel.style.display = '';
+    taikouArea.style.display = '';
+    taikouLabel.textContent = subMarks.map(m => `${m} ${MARK_LABELS[m]}`).join(' / ');
+    taikouArea.innerHTML = picks.slice(1).map((h, i) => tag(subMarks[i], h)).join('') ||
+      '<span style="font-size:12px;color:var(--text3)">相手馬なし（選択頭数が少ないため）</span>';
+  } else {
+    taikouLabel.style.display = 'none';
+    taikouArea.style.display = 'none';
+  }
+
+  document.getElementById('yoso-kaime').textContent = '💡 推奨買い目：' + kaimeText(betType, picks);
 
   const poolDesc = useSelection ? `選択した${pool.length}頭` : `全${pool.length}頭`;
+  const styleNote = cfg.style === 'win' ? '。1着候補重視（勝率を加点）' : cfg.style === 'place' ? '。3着以内の安定感重視（複勝率を加点）' : '';
   const sireNote = currentAxis === '血統' && top.sire ? `（${top.sire}産駒）` : '';
   const careerNote = top.career?.n ? `。直近10年${top.career.n}戦${top.career.w}勝${top.career.fitN ? `・同条件複勝${top.career.fitP3}/${top.career.fitN}` : ''}` : '';
-  let comment = `${currentAxis}軸スコア順（${poolDesc}から）。◎${top.name}${sireNote}が${top.score}点で最上位${careerNote}`;
-  if (sorted[1]) comment += `。○${sorted[1].name}（${sorted[1].score}点）が対抗`;
+  let comment = `${currentAxis}軸×${betType}${styleNote}（${poolDesc}から）。◎${top.name}${sireNote}が最上位${careerNote}`;
+  if (picks[1]) comment += `。○${picks[1].name}が対抗`;
   comment += '。';
   document.getElementById('yoso-comment').textContent = comment;
 
@@ -833,7 +897,7 @@ async function saveBet() {
     raceId = raceData.id;
   }
 
-  const pickedNums = yosoHorses.slice(0,4).map(h=>h.num);
+  const pickedNums = (yosoPicks.length ? yosoPicks : yosoHorses.slice(0, 4)).map(h => h.num);
   const {error} = await sb.from('bets').insert({
     user_id: currentUser.id,
     race_id: raceId,
