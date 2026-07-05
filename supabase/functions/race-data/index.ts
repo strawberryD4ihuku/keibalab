@@ -42,7 +42,11 @@ serve(async (req) => {
       });
     }
 
-    const result = action === "kaisai" ? await fetchKaisaiDates()
+    const result = action === "kaisai"
+      ? await fetchKaisaiDates(
+          parseInt(url.searchParams.get("year") || "") || 0,
+          parseInt(url.searchParams.get("month") || "") || 0,
+        )
       : action === "venues" ? await fetchVenues(date)
       : action === "odds" ? await fetchBetOdds(url.searchParams.get("race_id") || "", url.searchParams.get("bet") || "単勝")
       : action === "result" ? await fetchRaceResult(url.searchParams.get("race_id") || "")
@@ -58,11 +62,17 @@ serve(async (req) => {
   }
 });
 
-// 今月＋来月の開催日一覧（netkeibaカレンダーから）
-async function fetchKaisaiDates() {
-  const now = new Date();
-  const months: Array<[number, number]> = [[now.getFullYear(), now.getMonth() + 1]];
-  months.push(now.getMonth() === 11 ? [now.getFullYear() + 1, 1] : [now.getFullYear(), now.getMonth() + 2]);
+// 開催日一覧（netkeibaカレンダーから）
+// year/month指定ならその月のみ（バックフィル用）、未指定なら今月＋来月
+async function fetchKaisaiDates(year: number, month: number) {
+  let months: Array<[number, number]>;
+  if (year && month) {
+    months = [[year, month]];
+  } else {
+    const now = new Date();
+    months = [[now.getFullYear(), now.getMonth() + 1]];
+    months.push(now.getMonth() === 11 ? [now.getFullYear() + 1, 1] : [now.getFullYear(), now.getMonth() + 2]);
+  }
 
   const dates: Array<{ date: string; venues: string[]; graded: string[] }> = [];
   for (const [y, m] of months) {

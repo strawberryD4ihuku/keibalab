@@ -220,6 +220,7 @@
         <div class="nav-btn" onclick="showPage('stats')"><span>📊 収支<span class="nav-long">・成績</span></span></div>
         <div class="nav-btn" onclick="showPage('bets')"><span>📝 <span class="nav-long">購入</span>履歴</span></div>
         <div class="nav-btn" onclick="showPage('report')"><span>📈 検証</span></div>
+        <div class="nav-btn" onclick="showPage('strategy')"><span>🧭 戦略</span></div>
       </nav>
     </div>
     <div class="topbar-right">
@@ -333,6 +334,25 @@
         </div>
         <div style="font-size:11px;color:var(--text3);margin-top:6px">初回は数分かかります（1レースずつ予想を再現するため）。検証済みレースは保存され、2回目以降はすぐ表示されます。</div>
         <div id="report-out" style="margin-top:1rem"></div>
+      </div>
+    </div>
+
+    <!-- 戦略探索ページ -->
+    <div class="page" id="page-strategy">
+      <div class="card">
+        <div class="card-title"><span style="white-space:nowrap">🧭 戦略探索</span> <span style="color:var(--text3);font-weight:400;margin-left:4px">（回収率110%を超える「条件×買い方」をデータから探す）</span></div>
+        <div class="race-grid">
+          <div class="field"><label>蓄積期間（開始）</label><input type="date" id="bf-from"></div>
+          <div class="field"><label>蓄積期間（終了）</label><input type="date" id="bf-to"></div>
+          <div class="field"><label>最低レース数 n</label><input type="number" id="grid-minn" value="50" min="5" step="5"></div>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:10px">
+          <button class="btn-yoso" style="width:auto" id="bf-btn" onclick="runBackfill()">📥 バックフィル実行</button>
+          <button class="btn-save" style="width:auto" id="grid-btn" onclick="runGridSearch()">🧭 戦略を探索</button>
+          <span id="strategy-progress" style="font-size:12px;color:var(--text2)"></span>
+        </div>
+        <div id="strategy-stats" style="font-size:11px;color:var(--text3);margin-top:6px"></div>
+        <div id="strategy-out" style="margin-top:0.5rem"></div>
       </div>
     </div>
   </div>
@@ -531,6 +551,12 @@ if (/Line\/|FBAN|FBAV|Instagram|Twitter/i.test(navigator.userAgent)) {
 function initApp() {
   renderTable();
   loadKaisai();
+  // バックフィルのデフォルト期間 = 直近8週間
+  const now = new Date();
+  const bfTo = document.getElementById('bf-to');
+  const bfFrom = document.getElementById('bf-from');
+  if (bfTo && !bfTo.value) bfTo.value = fmtDateStr(now);
+  if (bfFrom && !bfFrom.value) bfFrom.value = fmtDateStr(new Date(now.getTime() - 56 * 86400 * 1000));
 }
 
 // APIヘルパー
@@ -686,10 +712,11 @@ function showPage(page) {
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
   document.getElementById('page-'+page).classList.add('active');
-  const idx = {yoso:0,stats:1,bets:2,report:3}[page];
+  const idx = {yoso:0,stats:1,bets:2,report:3,strategy:4}[page];
   document.querySelectorAll('.nav-btn')[idx].classList.add('active');
   if (page === 'stats') loadStats();
   if (page === 'bets') loadBets();
+  if (page === 'strategy') loadStrategyStats();
 }
 
 // Axis
@@ -1191,14 +1218,83 @@ function comboPayout(betType, combo, payouts) {
 
 let reportRunning = false;
 
-// スコアリングを変えたらバージョンを上げてキャッシュを無効化する
-const REPORT_CACHE_VER = 'klverify:v1:';
+// スコアリングを変えたらバージョンを上げてキャッシュ・DB蓄積を再検証させる
+// （v1: 特徴量なしの旧形式 → v2: 特徴量つき）
+const REPORT_CACHE_VER = 'klverify:v2:';
 
 async function mapLimitClient(items, limit, fn) {
   const queue = [...items];
   await Promise.all(Array.from({length: Math.min(limit, queue.length) || 1}, async () => {
     while (queue.length) await fn(queue.shift());
   }));
+}
+
+// 1レース分の検証レコード（特徴量＋券種別損益）を組み立てる
+function buildVerifyRow(r, data, res) {
+  const ranked = rankForBet(data.horses, BET_CONFIG['馬連']);
+  const axis = ranked[0] || null;
+  const rival = ranked[1] || null;
+  const hitTypes = [];
+  const perBet = {};
+  for (const bt in BET_CONFIG) {
+    const cfg = BET_CONFIG[bt];
+    const picks = rankForBet(data.horses, cfg).slice(0, cfg.marks.length);
+    const combos = buildCombos(bt, picks);
+    if (!combos.length) continue;
+    const ret = combos.reduce((s, c) => s + comboPayout(bt, c, res.payouts), 0);
+    perBet[bt] = {invest: combos.length * 100, ret};
+    if (ret > 0) hitTypes.push(bt);
+  }
+  return {
+    race_id: data.race_id || r.id,
+    date: r.date, venue: r.venue, num: r.num, name: r.name || '',
+    field: data.horses.length,
+    surface: data.race_surface || null,
+    distance: data.race_distance || null,
+    axis_odds: axis?.odds ?? null,
+    axis_ninki: axis?.ninki ?? null,
+    score_gap: axis && rival ? axis.score - rival.score : null,   // 予想の自信度
+    honmei: axis ? `◎${axis.num} ${axis.name}` : '',
+    top3: (res.top3 || []).join('-'),
+    hitTypes,
+    per_bet: perBet,
+  };
+}
+
+// 1レースを検証（localStorageキャッシュ→結果確認→予想再現の順）
+async function verifyRaceCore(r) {
+  const cached = r.id && localStorage.getItem(REPORT_CACHE_VER + r.id);
+  if (cached) return {row: JSON.parse(cached), fromCache: true};
+
+  // 先に結果を確認（未確定なら重い出馬表取得をスキップ）
+  const res = await apiGet({action: 'result', race_id: r.id});
+  if (!res.finished) return {pending: true};
+
+  const data = await apiGet({venue: r.venue, date: r.date, race_num: r.num});
+  // 馬柱軸のスコアで当時の予想を再現（戦績はレース当日より前のみ使用済み）
+  const saved = currentAxis;
+  currentAxis = '馬柱';
+  data.horses.forEach(h => { h.score = computeScore(h); });
+  currentAxis = saved;
+
+  const row = buildVerifyRow(r, data, res);
+  try { localStorage.setItem(REPORT_CACHE_VER + r.id, JSON.stringify(row)); } catch { /* 容量超過時はキャッシュなしで続行 */ }
+  return {row, fromCache: false};
+}
+
+// 確定レコードをSupabaseへ一括upsert（100件ずつ・ログイン時のみ）
+async function saveVerifyRows(rows) {
+  if (!currentUser || !rows.length) return;
+  const dbRows = rows.map(row => ({
+    race_id: row.race_id, date: row.date, venue: row.venue, num: row.num,
+    field: row.field, surface: row.surface, distance: row.distance,
+    axis_odds: row.axis_odds, axis_ninki: row.axis_ninki, score_gap: row.score_gap,
+    per_bet: row.per_bet,
+  }));
+  for (let i = 0; i < dbRows.length; i += 100) {
+    const {error} = await sb.from('verify_results').upsert(dbRows.slice(i, i + 100), {onConflict: 'race_id'});
+    if (error) { console.warn('verify_results保存失敗:', error.message); return; }
+  }
 }
 
 async function runWeeklyReport() {
@@ -1240,9 +1336,9 @@ async function runWeeklyReport() {
     const detail = [];
     let done = 0;
     const applyRow = row => {
-      for (const bt in (row.perBet || {})) {
+      for (const bt in (row.per_bet || {})) {
         const a = agg[bt];
-        const p = row.perBet[bt];
+        const p = row.per_bet[bt];
         a.races++;
         a.invest += p.invest;
         a.ret += p.ret;
@@ -1252,38 +1348,14 @@ async function runWeeklyReport() {
     };
 
     // 3レース並列で検証。確定済みレースの結果はブラウザにキャッシュして2回目以降は即表示
+    const rowsToSave = [];
     await mapLimitClient(races, 3, async (r) => {
       const base = {date: r.date, venue: r.venue, num: r.num, name: r.name};
       try {
-        const cached = r.id && localStorage.getItem(REPORT_CACHE_VER + r.id);
-        if (cached) { applyRow(JSON.parse(cached)); return; }
-
-        // 先に結果を確認（未確定なら重い出馬表取得をスキップ）
-        const res = await apiGet({action: 'result', race_id: r.id});
-        if (!res.finished) { detail.push({...base, note: '結果未確定'}); return; }
-
-        const data = await apiGet({venue: r.venue, date: r.date, race_num: r.num});
-        // 馬柱軸のスコアで当時の予想を再現（戦績はレース当日より前のみ使用済み）
-        const saved = currentAxis;
-        currentAxis = '馬柱';
-        data.horses.forEach(h => { h.score = computeScore(h); });
-        currentAxis = saved;
-
-        const hitTypes = [];
-        const perBet = {};
-        for (const bt in BET_CONFIG) {
-          const cfg = BET_CONFIG[bt];
-          const picks = rankForBet(data.horses, cfg).slice(0, cfg.marks.length);
-          const combos = buildCombos(bt, picks);
-          if (!combos.length) continue;
-          const ret = combos.reduce((s, c) => s + comboPayout(bt, c, res.payouts), 0);
-          perBet[bt] = {invest: combos.length * 100, ret};
-          if (ret > 0) hitTypes.push(bt);
-        }
-        const top = rankForBet(data.horses, BET_CONFIG['馬連'])[0];
-        const row = {...base, honmei: top ? `◎${top.num} ${top.name}` : '', top3: (res.top3 || []).join('-'), hitTypes, perBet};
-        try { localStorage.setItem(REPORT_CACHE_VER + r.id, JSON.stringify(row)); } catch { /* 容量超過時はキャッシュなしで続行 */ }
-        applyRow(row);
+        const v = await verifyRaceCore(r);
+        if (v.pending) { detail.push({...base, note: '結果未確定'}); return; }
+        applyRow(v.row);
+        rowsToSave.push(v.row);   // キャッシュ由来もDBへ（upsertなので冪等・DB欠損を自己修復）
       } catch {
         detail.push({...base, note: '取得失敗'});
       } finally {
@@ -1292,6 +1364,8 @@ async function runWeeklyReport() {
       }
     });
 
+    progEl.textContent = '結果を保存中...';
+    await saveVerifyRows(rowsToSave).catch(() => {});
     progEl.textContent = '';
     detail.sort((a, b) => a.date.localeCompare(b.date) || a.venue.localeCompare(b.venue) || a.num - b.num);
     renderReport(agg, detail, outEl);
@@ -1345,6 +1419,288 @@ function renderReport(agg, detail, outEl) {
   }
   if (curGroup) html += '</div>';
   html += '<div class="kaime-note" style="display:block;margin-top:10px">※ 直近7日の全レースを対象に、馬柱軸のスコアによる推奨買い目（1点100円）を全券種で購入した想定。オッズ・払戻は確定値、各馬の戦績集計はレース当日より前のデータのみ使用。検証済みレースはブラウザに保存され、2回目以降は高速に表示されます。</div>';
+  outEl.innerHTML = html;
+}
+
+// ===== 戦略探索（条件グリッドサーチ） =====
+
+// 蓄積レコードを全件読む（1000件ずつページング）
+async function loadAllVerifyRows() {
+  const out = [];
+  for (let from = 0; ; from += 1000) {
+    const {data, error} = await sb.from('verify_results').select('*').order('date').range(from, from + 999);
+    if (error) throw new Error(error.message);
+    out.push(...(data || []));
+    if (!data || data.length < 1000) break;
+  }
+  return out;
+}
+
+async function loadStrategyStats() {
+  const el = document.getElementById('strategy-stats');
+  if (!el) return;
+  try {
+    const {count} = await sb.from('verify_results').select('*', {count: 'exact', head: true});
+    if (!count) { el.textContent = '蓄積データ: 0件（まずバックフィルを実行してください）'; return; }
+    const {data: minMax} = await sb.from('verify_results').select('date').order('date').limit(1);
+    const {data: maxRow} = await sb.from('verify_results').select('date').order('date', {ascending: false}).limit(1);
+    el.textContent = `蓄積データ: ${count}レース（${minMax?.[0]?.date || '?'} 〜 ${maxRow?.[0]?.date || '?'}）`;
+  } catch (e) {
+    el.textContent = '蓄積データの取得に失敗: ' + e.message;
+  }
+}
+
+// 旧形式（v1）のローカルキャッシュをDBへ移行する
+// （特徴量は無いが、券種別損益とベースライン集計には使える。冪等）
+async function migrateV1Cache() {
+  const rows = [];
+  for (const key of Object.keys(localStorage)) {
+    if (!key.startsWith('klverify:v1:')) continue;
+    try {
+      const raceId = key.slice('klverify:v1:'.length);
+      const v = JSON.parse(localStorage.getItem(key));
+      if (!/^\d{12}$/.test(raceId) || !v?.date || !v?.perBet) continue;
+      rows.push({
+        race_id: raceId, date: v.date, venue: v.venue || '?', num: v.num || 0,
+        field: null, surface: null, distance: null,
+        axis_odds: null, axis_ninki: null, score_gap: null,
+        per_bet: v.perBet,
+      });
+    } catch { /* 壊れたキャッシュはスキップ */ }
+  }
+  if (!rows.length) return 0;
+  for (let i = 0; i < rows.length; i += 100) {
+    const {error} = await sb.from('verify_results').upsert(rows.slice(i, i + 100), {onConflict: 'race_id'});
+    if (error) throw new Error(error.message);
+  }
+  return rows.length;
+}
+
+// 過去期間の全レースを検証してSupabaseへ蓄積する
+let backfillRunning = false;
+async function runBackfill() {
+  if (backfillRunning || reportRunning) return;
+  if (!currentUser) { showToast('ログインが必要です'); return; }
+  const fromStr = document.getElementById('bf-from').value;
+  const toStr = document.getElementById('bf-to').value;
+  if (!fromStr || !toStr || fromStr > toStr) { showToast('期間を正しく指定してください'); return; }
+  backfillRunning = true;
+  const btn = document.getElementById('bf-btn');
+  const progEl = document.getElementById('strategy-progress');
+  btn.disabled = true;
+  btn.style.opacity = '0.5';
+  try {
+    // 旧キャッシュがあればまず移行（netkeiba側が過去データの提供を終了していても救える）
+    progEl.textContent = '過去の検証キャッシュを移行中...';
+    const migrated = await migrateV1Cache().catch(() => 0);
+    if (migrated) showToast(`旧キャッシュから${migrated}レースを移行しました`);
+    // 期間内の開催日（月ごとにカレンダーを取得）
+    const todayStr = fmtDateStr(new Date());
+    const months = [];
+    for (let d = new Date(fromStr + 'T00:00:00'); fmtDateStr(d).slice(0, 7) <= toStr.slice(0, 7); d.setMonth(d.getMonth() + 1, 1)) {
+      months.push([d.getFullYear(), d.getMonth() + 1]);
+    }
+    const dates = [];
+    for (const [y, m] of months) {
+      progEl.textContent = `${y}年${m}月の開催日を取得中...`;
+      try {
+        const j = await apiGet({action: 'kaisai', year: y, month: m});
+        for (const d of j.dates || []) if (d.date >= fromStr && d.date <= toStr && d.date <= todayStr) dates.push(d.date);
+      } catch { /* この月はスキップ */ }
+    }
+    if (!dates.length) { progEl.textContent = ''; showToast('期間内に開催がありません'); return; }
+
+    // 既にDBにあるレースはスキップ
+    const {data: existing} = await sb.from('verify_results').select('race_id').gte('date', fromStr).lte('date', toStr);
+    const have = new Set((existing || []).map(x => x.race_id));
+
+    const races = [];
+    for (const dt of dates) {
+      progEl.textContent = `${dt} のレース一覧を取得中...`;
+      try {
+        const {venues} = await apiGet({action: 'venues', date: dt});
+        for (const v of venues || [])
+          for (const rc of v.races || [])
+            if (rc.id && !have.has(rc.id)) races.push({date: dt, venue: v.venue, num: rc.num, name: rc.title || '', id: rc.id});
+      } catch { /* この日はスキップ */ }
+    }
+    if (!races.length) { progEl.textContent = ''; showToast('期間内のレースはすべて蓄積済みです'); await loadStrategyStats(); return; }
+
+    let done = 0, saved = 0, pend = 0, fail = 0;
+    const buffer = [];
+    await mapLimitClient(races, 3, async (r) => {
+      try {
+        const v = await verifyRaceCore(r);
+        if (v.pending) { pend++; return; }
+        buffer.push(v.row);
+        if (buffer.length >= 30) { const chunk = buffer.splice(0); await saveVerifyRows(chunk); saved += chunk.length; }
+      } catch { fail++; }
+      finally {
+        done++;
+        progEl.textContent = `バックフィル中 ${done}/${races.length}（保存${saved}・未確定${pend}・失敗${fail}）`;
+      }
+    });
+    if (buffer.length) { saved += buffer.length; await saveVerifyRows(buffer); }
+    progEl.textContent = '';
+    showToast(`バックフィル完了: ${saved}レース保存（未確定${pend}・失敗${fail}）`);
+    await loadStrategyStats();
+  } catch (e) {
+    progEl.textContent = '';
+    showToast('バックフィル失敗: ' + e.message);
+  } finally {
+    backfillRunning = false;
+    btn.disabled = false;
+    btn.style.opacity = '';
+  }
+}
+
+// ROIのブートストラップ下限（レースを復元抽出してROI分布の5%分位をとる）
+function bootstrapRoiLower(races, iters) {
+  const n = races.length;
+  if (!n) return 0;
+  const rois = [];
+  for (let i = 0; i < iters; i++) {
+    let inv = 0, ret = 0;
+    for (let k = 0; k < n; k++) {
+      const r = races[(Math.random() * n) | 0];
+      inv += r.invest;
+      ret += r.ret;
+    }
+    rois.push(inv ? ret / inv * 100 : 0);
+  }
+  rois.sort((a, b) => a - b);
+  return rois[Math.floor(iters * 0.05)];
+}
+
+// 条件グリッドサーチ本体：条件（1軸＋2軸の全組み合わせ）× 券種 で集計
+function gridSearch(records, minN) {
+  // scoreGapのしきい値は分位で自動決定
+  const gaps = records.map(r => r.score_gap).filter(v => v != null).map(Number).sort((a, b) => a - b);
+  const q = p => gaps.length ? gaps[Math.floor(p * (gaps.length - 1))] : 0;
+  const g1 = q(1 / 3), g2 = q(2 / 3);
+
+  const AXES = {
+    'オッズ帯': r => r.axis_odds == null ? null :
+      r.axis_odds < 2 ? '〜1.9' : r.axis_odds < 3.5 ? '2.0〜3.4' : r.axis_odds < 7 ? '3.5〜6.9' : r.axis_odds < 15 ? '7.0〜14.9' : '15.0〜',
+    '頭数': r => r.field == null ? null : r.field <= 9 ? '〜9頭' : r.field <= 13 ? '10〜13頭' : '14頭〜',
+    '馬場': r => r.surface || null,
+    '自信度': r => r.score_gap == null ? null : r.score_gap <= g1 ? '小' : r.score_gap <= g2 ? '中' : '大',
+    '場': r => r.venue || null,
+  };
+  const axisNames = Object.keys(AXES);
+  // 条件セット: 無条件（全レース）＋1軸＋2軸
+  const condSets = [[]];
+  axisNames.forEach(a => condSets.push([a]));
+  for (let i = 0; i < axisNames.length; i++)
+    for (let j = i + 1; j < axisNames.length; j++) condSets.push([axisNames[i], axisNames[j]]);
+
+  const segs = new Map();
+  for (const rec of records) {
+    const vals = {};
+    for (const a of axisNames) vals[a] = AXES[a](rec);
+    const perBet = rec.per_bet || {};
+    for (const bt in perBet) {
+      const pb = perBet[bt];
+      if (!pb || !pb.invest) continue;
+      for (const cs of condSets) {
+        if (cs.some(a => vals[a] == null)) continue;
+        const cond = cs.length ? cs.map(a => `${a}=${vals[a]}`).join(' × ') : '（全レース）';
+        const key = bt + '|' + cond;
+        let s = segs.get(key);
+        if (!s) { s = {bet: bt, cond, races: []}; segs.set(key, s); }
+        s.races.push({invest: pb.invest, ret: pb.ret});
+      }
+    }
+  }
+
+  const out = [];
+  for (const s of segs.values()) {
+    const n = s.races.length;
+    if (n < minN) continue;
+    const invest = s.races.reduce((x, r) => x + r.invest, 0);
+    const ret = s.races.reduce((x, r) => x + r.ret, 0);
+    const hits = s.races.filter(r => r.ret > 0).length;
+    out.push({
+      bet: s.bet, cond: s.cond, n, invest, ret,
+      roi: invest ? ret / invest * 100 : 0,
+      hitRate: hits / n * 100,
+      roiLower: bootstrapRoiLower(s.races, 200),
+      baseline: s.cond === '（全レース）',
+    });
+  }
+  out.sort((a, b) => b.roiLower - a.roiLower);
+  return out;
+}
+
+let gridRunning = false;
+async function runGridSearch() {
+  if (gridRunning) return;
+  gridRunning = true;
+  const btn = document.getElementById('grid-btn');
+  const progEl = document.getElementById('strategy-progress');
+  const outEl = document.getElementById('strategy-out');
+  btn.disabled = true;
+  btn.style.opacity = '0.5';
+  try {
+    progEl.textContent = '蓄積データを読み込み中...';
+    const records = await loadAllVerifyRows();
+    if (!records.length) {
+      outEl.innerHTML = '<div class="empty">蓄積データがありません。先にバックフィルを実行してください</div>';
+      return;
+    }
+    const minN = Math.max(5, parseInt(document.getElementById('grid-minn').value) || 50);
+    progEl.textContent = `${records.length}レースで条件を総当たり中...`;
+    await new Promise(r => setTimeout(r, 30));   // 進捗表示を反映させる
+    const segs = gridSearch(records, minN);
+    renderGridSearch(segs, records.length, minN, outEl);
+    progEl.textContent = '';
+  } catch (e) {
+    progEl.textContent = '';
+    outEl.innerHTML = `<div class="empty">探索に失敗しました：${esc(e.message)}</div>`;
+  } finally {
+    gridRunning = false;
+    btn.disabled = false;
+    btn.style.opacity = '';
+  }
+}
+
+function renderGridSearch(segs, total, minN, outEl) {
+  const winners = segs.filter(s => s.roi >= 110);
+  const champions = winners.filter(s => s.roiLower >= 110);
+  const baselines = segs.filter(s => s.baseline).sort((a, b) => b.roi - a.roi);
+
+  const table = (rows, emptyMsg) => {
+    if (!rows.length) return `<div class="empty">${emptyMsg}</div>`;
+    let h = '<div class="table-wrap"><table><thead><tr><th>条件</th><th>買い方</th><th>n</th><th>的中率</th><th>ROI</th><th>ROI下限<br><span style="font-weight:400">(悲観値)</span></th></tr></thead><tbody>';
+    for (const s of rows) {
+      const champ = s.roiLower >= 110;
+      h += `<tr${s.roi >= 110 ? ' style="background:rgba(62,207,142,0.06)"' : ''}>
+        <td style="text-align:left">${champ ? '🏆 ' : ''}${esc(s.cond)}</td>
+        <td style="white-space:nowrap">${esc(s.bet)}</td>
+        <td>${s.n}</td>
+        <td>${s.hitRate.toFixed(0)}%</td>
+        <td class="${s.roi >= 110 ? 'green' : s.roi >= 100 ? '' : 'red'}" style="font-weight:700">${s.roi.toFixed(0)}%</td>
+        <td class="${s.roiLower >= 110 ? 'green' : ''}">${s.roiLower.toFixed(0)}%</td>
+      </tr>`;
+    }
+    return h + '</tbody></table></div>';
+  };
+
+  let html = '';
+  if (champions.length) {
+    html += `<div class="yoso-kaime" style="margin:1rem 0">🏆 ROI下限でも110%を超える戦略が ${champions.length} 件見つかりました</div>`;
+  } else if (winners.length) {
+    html += `<div class="yoso-kaime" style="margin:1rem 0">ROI110%超は ${winners.length} 件。ただしROI下限（悲観値）では110%未満のため、まぐれの可能性があります。データを増やして確認を</div>`;
+  } else {
+    html += `<div class="axis-desc" style="margin:1rem 0">ROI110%以上の条件は見つかりませんでした（n≧${minN}）。データを蓄積するか、しきい値を下げて傾向を観察してください</div>`;
+  }
+  html += `<div class="card-title" style="margin-top:1rem">ROI110%超のセグメント（n≧${minN}）</div>`;
+  html += table(winners, '該当なし');
+  html += `<div class="card-title" style="margin-top:1.25rem">上位セグメント（ROI下限順・上位15）</div>`;
+  html += table(segs.slice(0, 15), 'セグメントがありません（nしきい値を下げてください）');
+  html += `<div class="card-title" style="margin-top:1.25rem">ベースライン（全レース × 各券種）</div>`;
+  html += table(baselines, 'データ不足');
+  html += `<div class="kaime-note" style="display:block;margin-top:10px">※ ${total}レースの蓄積データから、条件（オッズ帯・頭数・馬場・自信度・場の1〜2軸組み合わせ）×券種を総当たり。ROI下限はブートストラップ200回の5%分位（悲観値）。サンプルが少ない間は参考値です。</div>`;
   outEl.innerHTML = html;
 }
 

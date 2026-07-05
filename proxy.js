@@ -37,7 +37,10 @@ const server = http.createServer(async (req, res) => {
   try {
     let result;
     if (action === 'kaisai') {
-      result = await fetchKaisaiDates();
+      result = await fetchKaisaiDates(
+        parseInt(url.searchParams.get('year') || '') || 0,
+        parseInt(url.searchParams.get('month') || '') || 0
+      );
     } else if (action === 'venues') {
       if (!date) throw Object.assign(new Error('date は必須です'), {status: 400});
       result = await fetchVenues(date);
@@ -62,11 +65,17 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-// 今月＋来月の開催日一覧（netkeibaカレンダーから）
-async function fetchKaisaiDates() {
-  const now = new Date();
-  const months = [[now.getFullYear(), now.getMonth() + 1]];
-  months.push(now.getMonth() === 11 ? [now.getFullYear() + 1, 1] : [now.getFullYear(), now.getMonth() + 2]);
+// 開催日一覧（netkeibaカレンダーから）
+// year/month指定ならその月のみ（バックフィル用）、未指定なら今月＋来月
+async function fetchKaisaiDates(year, month) {
+  let months;
+  if (year && month) {
+    months = [[year, month]];
+  } else {
+    const now = new Date();
+    months = [[now.getFullYear(), now.getMonth() + 1]];
+    months.push(now.getMonth() === 11 ? [now.getFullYear() + 1, 1] : [now.getFullYear(), now.getMonth() + 2]);
+  }
 
   const dates = [];
   for (const [y, m] of months) {
