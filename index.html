@@ -575,7 +575,9 @@ async function loadVenues() {
   }
 }
 
-// その場のメインレースをレース番号・レース名のデフォルトにする
+// レース番号のデフォルトを決める：
+// 選択日が今日なら「現在時刻以降で最初に発走するレース」、
+// それ以外（未来・過去の日付や全レース終了後）はその場のメインレース
 function applyMainRace() {
   const v = venueInfo.find(x => x.venue === document.getElementById('venue').value);
   if (!v) return;
@@ -587,8 +589,23 @@ function applyMainRace() {
       return `<option value="${r.num}R">${esc(label)}</option>`;
     }).join('');
   }
-  raceSel.value = v.main_num + 'R';
-  document.getElementById('race-name').value = v.main_name || '';
+
+  const now = new Date();
+  const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  const isToday = document.getElementById('race-date').value === todayStr;
+  let target = null;
+  if (isToday && v.races?.length) {
+    const nowMin = now.getHours() * 60 + now.getMinutes();
+    // racesはレース番号順＝発走時刻順
+    target = v.races.find(r => {
+      if (!r.time) return false;
+      const [h, m] = r.time.split(':').map(Number);
+      return h * 60 + m >= nowMin;
+    }) || null;
+  }
+
+  raceSel.value = (target ? target.num : v.main_num) + 'R';
+  document.getElementById('race-name').value = (target ? target.title : v.main_name) || '';
 }
 
 // レース番号を変えたらレース名も追従させる
