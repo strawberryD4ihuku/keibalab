@@ -107,7 +107,9 @@
   .yoso-mark { font-size: 12px; color: var(--text2); margin-bottom: 6px; }
   .yoso-horses { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
   .yoso-tag { background: var(--bg2); border: 1px solid var(--border2); border-radius: var(--radius-sm); padding: 4px 10px; font-size: 12px; }
-  .yoso-kaime { font-size: 13px; font-weight: 500; color: var(--gold); margin-top: 10px; padding: 8px 10px; background: rgba(240,192,64,0.08); border-radius: var(--radius-sm); }
+  .yoso-kaime { font-size: 13px; font-weight: 500; color: var(--gold); margin-top: 10px; padding: 8px 10px; background: rgba(240,192,64,0.08); border-radius: var(--radius-sm); line-height: 1.8; }
+  .kaime-list { font-size: 12px; font-weight: 400; color: var(--text); }
+  .kaime-note { font-size: 11px; font-weight: 400; color: var(--text2); }
   .yoso-comment { font-size: 12px; color: var(--text2); margin-top: 8px; }
 
   /* Save bet form */
@@ -792,11 +794,12 @@ const BET_CONFIG = {
   'ワイド': {marks: ['◎', '○', '▲'], style: 'place', need: 2},
   '馬連':   {marks: ['◎', '○', '▲', '△'], style: 'mixed', need: 2},
   '馬単':   {marks: ['◎', '○', '▲'], style: 'win', need: 2},
-  '3連複':  {marks: ['◎', '○', '▲', '△'], style: 'place', need: 3},
-  '3連単':  {marks: ['◎', '○', '▲', '△'], style: 'win', need: 3},
+  '3連複':  {marks: ['◎', '○', '▲', '△', '☆'], style: 'place', need: 3},
+  '3連単':  {marks: ['◎', '○', '▲', '△', '☆'], style: 'win', need: 3},
 };
-const MARK_LABELS = {'◎': '本命', '○': '対抗', '▲': '単穴', '△': '連下'};
+const MARK_LABELS = {'◎': '本命', '○': '対抗', '▲': '単穴', '△': '連下', '☆': '穴'};
 
+// 買い目テキスト（HTMLで返す。3連系は具体的な組み合わせを列挙）
 function kaimeText(betType, picks) {
   const cfg = BET_CONFIG[betType];
   if (picks.length < cfg.need) return `${betType}には最低${cfg.need + 1}頭必要です。選択を増やしてください`;
@@ -807,8 +810,31 @@ function kaimeText(betType, picks) {
     case 'ワイド': return `ワイド ${n(0)}-${n(1)} 本線${picks[2] ? `／${n(0)}-${n(2)} 押さえ（計2点）` : '（1点）'}`;
     case '馬連':   return `馬連 ${n(0)}-${n(1)} 本線${picks[2] ? `／${n(0)}-${n(2)}${picks[3] ? `・${n(0)}-${n(3)}` : ''} 押さえ（計${Math.min(picks.length - 1, 3)}点）` : '（1点）'}`;
     case '馬単':   return `馬単 ${n(0)}→${n(1)} 本線${picks[2] ? `／${n(0)}→${n(2)} 押さえ（計2点）` : '（1点）'}`;
-    case '3連複':  return `3連複 ${n(0)}-${n(1)}-${n(2)} 本線${picks[3] ? `／4頭BOX（計4点）` : '（1点）'}`;
-    case '3連単':  return `3連単 ${n(0)}→${n(1)}→${n(2)} 本線／◎軸マルチで押さえ`;
+    case '3連複': {
+      // ◎軸・相手（○▲△☆）から2頭の流し
+      const others = picks.slice(1);
+      const combos = [];
+      for (let i = 0; i < others.length; i++)
+        for (let j = i + 1; j < others.length; j++)
+          combos.push(`${picks[0].num}-${others[i].num}-${others[j].num}`);
+      let t = `3連複 ◎${n(0)}軸 → 相手 ${others.map(p => p.num).join('・')} の2頭流し（${combos.length}点）`;
+      t += `<br><span class="kaime-list">${combos.join(' ／ ')}</span>`;
+      if (others.length >= 4) t += `<br><span class="kaime-note">絞るなら本線 ${picks[0].num}-${picks[1].num}-${picks[2].num} と ${picks[0].num}-${picks[1].num}-${picks[3].num} の2点</span>`;
+      return t;
+    }
+    case '3連単': {
+      // フォーメーション：◎1着固定、2着=○▲、3着=○▲△☆
+      const second = picks.slice(1, 3);
+      const third = picks.slice(1, 5);
+      const combos = [];
+      for (const s of second)
+        for (const t3 of third)
+          if (t3 !== s) combos.push(`${picks[0].num}→${s.num}→${t3.num}`);
+      let t = `3連単フォーメーション ◎${n(0)}1着固定／2着 ${second.map(p => p.num).join('・')}／3着 ${third.map(p => p.num).join('・')}（${combos.length}点）`;
+      t += `<br><span class="kaime-list">${combos.join(' ／ ')}</span>`;
+      t += `<br><span class="kaime-note">絞るなら本線 ${picks[0].num}→${picks[1].num}→${picks[2].num} の1点</span>`;
+      return t;
+    }
   }
   return '';
 }
@@ -856,7 +882,7 @@ function generateYoso() {
     taikouArea.style.display = 'none';
   }
 
-  document.getElementById('yoso-kaime').textContent = '💡 推奨買い目：' + kaimeText(betType, picks);
+  document.getElementById('yoso-kaime').innerHTML = '💡 推奨買い目：' + kaimeText(betType, picks);
 
   const poolDesc = useSelection ? `選択した${pool.length}頭` : `全${pool.length}頭`;
   const styleNote = cfg.style === 'win' ? '。1着候補重視（勝率を加点）' : cfg.style === 'place' ? '。3着以内の安定感重視（複勝率を加点）' : '';
