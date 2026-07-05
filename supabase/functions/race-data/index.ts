@@ -36,7 +36,7 @@ serve(async (req) => {
     const date = url.searchParams.get("date") || "";       // YYYY-MM-DD
     const raceNum = parseInt(url.searchParams.get("race_num") || "1");
 
-    if (action !== "kaisai" && action !== "odds" && !date) {
+    if (action !== "kaisai" && action !== "odds" && action !== "result" && !date) {
       return new Response(JSON.stringify({ error: "date は必須です (YYYY-MM-DD)" }), {
         status: 400, headers: { ...CORS, "Content-Type": "application/json" },
       });
@@ -45,6 +45,7 @@ serve(async (req) => {
     const result = action === "kaisai" ? await fetchKaisaiDates()
       : action === "venues" ? await fetchVenues(date)
       : action === "odds" ? await fetchBetOdds(url.searchParams.get("race_id") || "", url.searchParams.get("bet") || "単勝")
+      : action === "result" ? await fetchRaceResult(url.searchParams.get("race_id") || "")
       : await fetchRaceData(venue, date, raceNum);
 
     return new Response(JSON.stringify(result), {
@@ -163,7 +164,9 @@ async function fetchRaceData(venue: string, date: string, raceNum: number) {
   const distance = distM ? parseInt(distM[2]) : null;
 
   // 各馬の全戦績ページから直近10年の成績を集計
-  await mergeCareers(horses, venue, surface, distance);
+  // （過去レースの検証時にリークしないよう、レース当日以降の走は除外）
+  const untilTs = new Date(date + "T00:00:00+09:00").getTime() || Date.now();
+  await mergeCareers(horses, venue, surface, distance, untilTs);
 
   const raceName = (shutubaHtml.match(/<title>([^|<]+?)\s*出馬表/)?.[1] || "").trim();
   return {
@@ -174,22 +177,22 @@ async function fetchRaceData(venue: string, date: string, raceNum: number) {
 }
 
 // 各馬の戦績ページ（db.netkeiba.com/horse/result/{id}/）を並列取得して集計
-async function mergeCareers(horses: Horse[], venue: string, surface: string | null, distance: number | null) {
+async function mergeCareers(horses: Horse[], venue: string, surface: string | null, distance: number | null, untilTs: number) {
   const targets = horses.filter((h) => h.horseId);
   await mapLimit(targets, 5, async (h) => {
     try {
       const html = await fetchHtml(`https://db.netkeiba.com/horse/result/${h.horseId}/`);
-      h.career = parseCareer(html, venue, surface, distance);
+      h.career = parseCareer(html, venue, surface, distance, untilTs);
     } catch { h.career = null; }
   });
 }
 
-// 戦績テーブルから直近10年分を集計：
+// 戦績テーブルから「レース当日より前×直近10年」分を集計：
 // 通算（n/w/p3）・同条件=同じ馬場種別かつ距離±200m（fit*）・同競馬場（venue*）
-function parseCareer(html: string, venue: string, surface: string | null, distance: number | null): CareerStats {
+function parseCareer(html: string, venue: string, surface: string | null, distance: number | null, untilTs: number): CareerStats {
   const tbl = html.match(/class="db_h_race_results[\s\S]*?<\/table>/)?.[0] || "";
   const rows = [...tbl.matchAll(/<tr[^>]*>[\s\S]*?<\/tr>/g)].slice(1);
-  const cutoff = Date.now() - 10 * 365.25 * 86400 * 1000;
+  const cutoff = (untilTs || Date.now()) - 10 * 365.25 * 86400 * 1000;
   const s: CareerStats = {n: 0, w: 0, p3: 0, fitN: 0, fitW: 0, fitP3: 0, venueN: 0, venueP3: 0};
   for (const m of rows) {
     const cells = [...m[0].matchAll(/<td[^>]*>([\s\S]*?)<\/td>/g)]
@@ -197,6 +200,7 @@ function parseCareer(html: string, venue: string, surface: string | null, distan
     if (cells.length < 20) continue;
     const d = new Date(cells[0].replace(/\//g, "-"));
     if (isNaN(d.getTime()) || d.getTime() < cutoff) continue;
+    if (untilTs && d.getTime() >= untilTs) continue;   // レース当日以降の走は使わない
     const rank = parseInt(cells[11]);
     if (!rank) continue;   // 中止・除外・取消はスキップ
     s.n++;
@@ -297,6 +301,31 @@ async function fetchOddsDict(raceId: string, typeCode: number): Promise<OddsResu
 }
 
 const BET_TYPE_CODE: Record<string, number> = {"単勝": 1, "複勝": 1, "枠連": 3, "馬連": 4, "ワイド": 5, "馬単": 6, "3連複": 7, "3連単": 8};
+
+// レース結果：全券種の払戻（100円あたり）と1〜3着馬番
+async function fetchRaceResult(raceId: string) {
+  if (!/^\d{12}$/.test(raceId)) throw new Error("race_id は必須です");
+  const html = await fetchHtml(`https://race.netkeiba.com/race/result.html?race_id=${raceId}`);
+  const CLS: Record<string, string> = {Tansho: "単勝", Fukusho: "複勝", Wakuren: "枠連", Umaren: "馬連", Wide: "ワイド", Umatan: "馬単", Fuku3: "3連複", Tan3: "3連単"};
+  const payouts: Record<string, Array<{nums: number[]; yen: number}>> = {};
+  const tbls = (html.match(/<table[^>]*class="[^"]*Payout[^"]*"[\s\S]*?<\/table>/g) || []).join("");
+  for (const m of tbls.matchAll(/<tr class="([^"]+)">([\s\S]*?)<\/tr>/g)) {
+    const bet = CLS[m[1].trim()];
+    if (!bet) continue;
+    const resultTd = m[2].match(/<td class="Result">([\s\S]*?)<\/td>/)?.[1] || "";
+    const yen = [...(m[2].match(/<td class="Payout">([\s\S]*?)<\/td>/)?.[1] || "").matchAll(/([\d,]+)円/g)]
+      .map((x) => parseInt(x[1].replace(/,/g, "")));
+    // 単勝・複勝は<div>ごとに1頭、組み合わせ系は<ul>ごとに1組
+    const groups = (bet === "単勝" || bet === "複勝")
+      ? [...resultTd.matchAll(/<span>(\d+)<\/span>/g)].map((x) => [parseInt(x[1])])
+      : [...resultTd.matchAll(/<ul>([\s\S]*?)<\/ul>/g)].map((u) => [...u[1].matchAll(/<span>(\d+)<\/span>/g)].map((x) => parseInt(x[1])));
+    const entries = groups.map((nums, i) => ({nums, yen: yen[i] ?? 0})).filter((g) => g.nums.length && g.yen);
+    if (entries.length) payouts[bet] = entries;
+  }
+  // 1〜3着（3連単の組み合わせがそのまま着順）
+  const top3 = payouts["3連単"]?.[0]?.nums || payouts["馬単"]?.[0]?.nums || [];
+  return { payouts, top3, finished: Object.keys(payouts).length > 0 };
+}
 
 // 券種別のオッズ辞書を返す（複勝は type=1 のレスポンス内キー"2"）
 async function fetchBetOdds(raceId: string, bet: string) {

@@ -219,6 +219,7 @@
         <div class="nav-btn active" onclick="showPage('yoso')"><span>📋 予想</span></div>
         <div class="nav-btn" onclick="showPage('stats')"><span>📊 収支<span class="nav-long">・成績</span></span></div>
         <div class="nav-btn" onclick="showPage('bets')"><span>📝 <span class="nav-long">購入</span>履歴</span></div>
+        <div class="nav-btn" onclick="showPage('report')"><span>📈 検証</span></div>
       </nav>
     </div>
     <div class="topbar-right">
@@ -319,6 +320,18 @@
       <div class="card">
         <div class="card-title">📝 購入履歴</div>
         <div class="bets-list" id="bets-list"><div class="loading">読み込み中...</div></div>
+      </div>
+    </div>
+
+    <!-- 週間検証ページ -->
+    <div class="page" id="page-report">
+      <div class="card">
+        <div class="card-title"><span style="white-space:nowrap">📈 週間AI予想検証</span> <span style="color:var(--text3);font-weight:400;margin-left:4px">（直近7日の各場メインレースで、AIの推奨買い目どおり買っていたら？）</span></div>
+        <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+          <button class="btn-yoso" style="width:auto" id="report-btn" onclick="runWeeklyReport()">🔍 検証を実行</button>
+          <span id="report-progress" style="font-size:12px;color:var(--text2)"></span>
+        </div>
+        <div id="report-out" style="margin-top:1rem"></div>
       </div>
     </div>
   </div>
@@ -672,7 +685,7 @@ function showPage(page) {
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
   document.getElementById('page-'+page).classList.add('active');
-  const idx = {yoso:0,stats:1,bets:2}[page];
+  const idx = {yoso:0,stats:1,bets:2,report:3}[page];
   document.querySelectorAll('.nav-btn')[idx].classList.add('active');
   if (page === 'stats') loadStats();
   if (page === 'bets') loadBets();
@@ -893,6 +906,50 @@ async function loadKaimeOdds(betType) {
   } catch { /* オッズ取得失敗時は注釈なしのまま */ }
 }
 
+// 券種に合わせた序列（軸スコア＋勝率 or 複勝率ボーナス）
+function rankForBet(pool, cfg) {
+  const betValue = h => {
+    let v = h.score;
+    const c = h.career;
+    if (c && c.n > 0) {
+      if (cfg.style === 'win') v += (c.w + 1) / (c.n + 10) * 40;
+      if (cfg.style === 'place') v += (c.p3 + 2) / (c.n + 8) * 30;
+    }
+    return v;
+  };
+  return [...pool].sort((a, b) => betValue(b) - betValue(a));
+}
+
+// 推奨買い目を組み合わせ配列で返す（kaimeTextと同じ構成、1点=100円）
+function buildCombos(betType, picks) {
+  const cfg = BET_CONFIG[betType];
+  if (picks.length < cfg.need) return [];
+  const n = picks.map(p => p.num);
+  switch (betType) {
+    case '単勝':   return [[n[0]]];
+    case '複勝':   return n.slice(0, 2).map(x => [x]);
+    case 'ワイド': return n[2] ? [[n[0], n[1]], [n[0], n[2]]] : [[n[0], n[1]]];
+    case '馬連':   return [[n[0], n[1]], n[2] ? [n[0], n[2]] : null, n[3] ? [n[0], n[3]] : null].filter(Boolean);
+    case '馬単':   return n[2] ? [[n[0], n[1]], [n[0], n[2]]] : [[n[0], n[1]]];
+    case '3連複': {
+      const others = n.slice(1);
+      const out = [];
+      for (let i = 0; i < others.length; i++)
+        for (let j = i + 1; j < others.length; j++) out.push([n[0], others[i], others[j]]);
+      return out;
+    }
+    case '3連単': {
+      const second = n.slice(1, 3), third = n.slice(1, 5);
+      const out = [];
+      for (const s of second)
+        for (const t of third)
+          if (t !== s) out.push([n[0], s, t]);
+      return out;
+    }
+  }
+  return [];
+}
+
 function generateYoso() {
   if (!horses.length) { showToast('先に「出馬表を取得」でデータを読み込んでください'); return; }
 
@@ -903,17 +960,7 @@ function generateYoso() {
   const useSelection = selectedHorses.size >= 2;
   const pool = useSelection ? horses.filter(h => selectedHorses.has(h.num)) : horses;
 
-  // 券種に合わせて序列を味付け（軸スコア＋勝率 or 複勝率ボーナス）
-  const betValue = h => {
-    let v = h.score;
-    const c = h.career;
-    if (c && c.n > 0) {
-      if (cfg.style === 'win') v += (c.w + 1) / (c.n + 10) * 40;
-      if (cfg.style === 'place') v += (c.p3 + 2) / (c.n + 8) * 30;
-    }
-    return v;
-  };
-  const sorted = [...pool].sort((a, b) => betValue(b) - betValue(a));
+  const sorted = rankForBet(pool, cfg);
   yosoHorses = sorted;
   const picks = sorted.slice(0, cfg.marks.length);
   yosoPicks = picks;
@@ -1120,6 +1167,145 @@ async function loadBets() {
       <span style="font-weight:600;margin-left:8px;color:${net>=0?'var(--green)':'var(--red)'}">${net>=0?'+':''}¥${net.toLocaleString()}</span>
     </div>`;
   }).join('') : '<div class="empty">購入記録がありません</div>';
+}
+
+// ===== 週間AI予想検証 =====
+function fmtDateStr(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+const ORDERED_BETS = new Set(['馬単', '3連単']);
+
+// 買い目1点が的中していれば払戻（100円あたり）を返す
+function comboPayout(betType, combo, payouts) {
+  for (const p of (payouts[betType] || [])) {
+    if (ORDERED_BETS.has(betType)) {
+      if (combo.length === p.nums.length && combo.every((x, i) => x === p.nums[i])) return p.yen;
+    } else {
+      if ([...combo].sort((a, b) => a - b).join(',') === [...p.nums].sort((a, b) => a - b).join(',')) return p.yen;
+    }
+  }
+  return 0;
+}
+
+let reportRunning = false;
+
+async function runWeeklyReport() {
+  if (reportRunning) return;
+  reportRunning = true;
+  const btn = document.getElementById('report-btn');
+  const progEl = document.getElementById('report-progress');
+  const outEl = document.getElementById('report-out');
+  btn.disabled = true;
+  btn.style.opacity = '0.5';
+  outEl.innerHTML = '';
+  try {
+    progEl.textContent = '開催日を取得中...';
+    const {dates} = await apiGet({action: 'kaisai'});
+    const now = new Date();
+    const todayStr = fmtDateStr(now);
+    const weekAgoStr = fmtDateStr(new Date(now.getTime() - 7 * 86400 * 1000));
+    const targets = (dates || []).filter(d => d.date <= todayStr && d.date >= weekAgoStr);
+    if (!targets.length) {
+      progEl.textContent = '';
+      outEl.innerHTML = '<div class="empty">直近7日間に開催がありません</div>';
+      return;
+    }
+
+    // 対象レース = 各開催日×各場のメインレース
+    const races = [];
+    for (const d of targets) {
+      progEl.textContent = `${d.date} の開催情報を取得中...`;
+      try {
+        const {venues} = await apiGet({action: 'venues', date: d.date});
+        for (const v of venues || []) races.push({date: d.date, venue: v.venue, num: v.main_num, name: v.main_name});
+      } catch { /* この日はスキップ */ }
+    }
+
+    const agg = {};
+    for (const bt in BET_CONFIG) agg[bt] = {races: 0, hits: 0, invest: 0, ret: 0};
+    const detail = [];
+    let done = 0;
+    for (const r of races) {
+      done++;
+      const label = `${r.date.slice(5)} ${r.venue}${r.num}R ${r.name}`;
+      progEl.textContent = `検証中 ${done}/${races.length}：${label}`;
+      try {
+        const data = await apiGet({venue: r.venue, date: r.date, race_num: r.num});
+        const res = await apiGet({action: 'result', race_id: data.race_id});
+        if (!res.finished) { detail.push({label, note: '結果未確定'}); continue; }
+
+        // 馬柱軸のスコアで当時の予想を再現（戦績はレース当日より前のみ使用済み）
+        const saved = currentAxis;
+        currentAxis = '馬柱';
+        data.horses.forEach(h => { h.score = computeScore(h); });
+        currentAxis = saved;
+
+        const hitTypes = [];
+        for (const bt in BET_CONFIG) {
+          const cfg = BET_CONFIG[bt];
+          const picks = rankForBet(data.horses, cfg).slice(0, cfg.marks.length);
+          const combos = buildCombos(bt, picks);
+          if (!combos.length) continue;
+          const ret = combos.reduce((s, c) => s + comboPayout(bt, c, res.payouts), 0);
+          const a = agg[bt];
+          a.races++;
+          a.invest += combos.length * 100;
+          a.ret += ret;
+          if (ret > 0) { a.hits++; hitTypes.push(bt); }
+        }
+        const top = rankForBet(data.horses, BET_CONFIG['馬連'])[0];
+        detail.push({label, honmei: top ? `◎${top.num} ${top.name}` : '', top3: (res.top3 || []).join('-'), hitTypes});
+      } catch (e) {
+        detail.push({label, note: '取得失敗'});
+      }
+    }
+    progEl.textContent = '';
+    renderReport(agg, detail, outEl);
+  } catch (e) {
+    progEl.textContent = '';
+    outEl.innerHTML = `<div class="empty">検証に失敗しました：${esc(e.message)}</div>`;
+  } finally {
+    reportRunning = false;
+    btn.disabled = false;
+    btn.style.opacity = '';
+  }
+}
+
+function renderReport(agg, detail, outEl) {
+  const rows = Object.entries(agg)
+    .filter(([, a]) => a.races > 0)
+    .map(([bt, a]) => ({bt, ...a, rec: a.invest ? a.ret / a.invest * 100 : 0, hitRate: a.races ? a.hits / a.races * 100 : 0}))
+    .sort((x, y) => y.rec - x.rec);
+  if (!rows.length) {
+    outEl.innerHTML = '<div class="empty">検証できたレースがありませんでした</div>';
+    return;
+  }
+  const best = rows[0];
+  let html = `<div class="yoso-kaime" style="margin-bottom:1rem">🏆 この期間のベストな買い方：<strong>${esc(best.bt)}</strong>（回収率 ${best.rec.toFixed(0)}%・的中率 ${best.hitRate.toFixed(0)}%）</div>`;
+  html += '<div class="table-wrap"><table><thead><tr><th>買い方</th><th>的中/レース</th><th>的中率</th><th>投資額</th><th>払戻額</th><th>回収率</th></tr></thead><tbody>';
+  for (const r of rows) {
+    html += `<tr${r === best ? ' style="background:rgba(240,192,64,0.07)"' : ''}>
+      <td style="font-weight:600;white-space:nowrap">${r === best ? '🏆 ' : ''}${esc(r.bt)}</td>
+      <td>${r.hits}/${r.races}</td>
+      <td>${r.hitRate.toFixed(0)}%</td>
+      <td style="white-space:nowrap">¥${r.invest.toLocaleString()}</td>
+      <td style="white-space:nowrap">¥${r.ret.toLocaleString()}</td>
+      <td class="${r.rec >= 100 ? 'green' : 'red'}" style="font-weight:700">${r.rec.toFixed(0)}%</td>
+    </tr>`;
+  }
+  html += '</tbody></table></div>';
+  html += '<div class="card-title" style="margin-top:1.25rem">レース別の結果</div><div class="bets-list">';
+  for (const d of detail) {
+    html += `<div class="bet-row"><span style="flex:1;color:var(--text2)">${esc(d.label)}</span>`
+      + (d.note
+        ? `<span style="color:var(--text3)">${esc(d.note)}</span>`
+        : `<span class="bet-horses">${esc(d.honmei)}</span><span style="color:var(--text2);white-space:nowrap">結果 ${esc(d.top3)}</span><span class="${d.hitTypes.length ? 'bet-hit' : 'bet-miss'}" style="white-space:nowrap">${d.hitTypes.length ? '的中: ' + d.hitTypes.map(esc).join('・') : '全滅'}</span>`)
+      + '</div>';
+  }
+  html += '</div>';
+  html += '<div class="kaime-note" style="display:block;margin-top:10px">※ 直近7日の各開催場メインレースを対象に、馬柱軸のスコアによる推奨買い目（1点100円）を全券種で購入した想定。オッズ・払戻は確定値、各馬の戦績集計はレース当日より前のデータのみ使用。サンプル数が少ないため参考程度に。</div>';
+  outEl.innerHTML = html;
 }
 
 function showToast(msg) {
