@@ -41,6 +41,11 @@ const server = http.createServer(async (req, res) => {
     } else if (action === 'venues') {
       if (!date) throw Object.assign(new Error('date は必須です'), {status: 400});
       result = await fetchVenues(date);
+    } else if (action === 'odds') {
+      const raceId = url.searchParams.get('race_id') || '';
+      const bet = url.searchParams.get('bet') || '単勝';
+      if (!/^\d{12}$/.test(raceId)) throw Object.assign(new Error('race_id は必須です'), {status: 400});
+      result = await fetchBetOdds(raceId, bet);
     } else {
       if (!date) throw Object.assign(new Error('date は必須です'), {status: 400});
       result = await fetchRaceData(venue, date, raceNum);
@@ -142,16 +147,16 @@ async function fetchRaceData(venue, date, raceNum) {
     throw new Error(`${venue}の開催が見つかりません（${date}）${venues.length ? ' この日の開催: ' + venues.join('・') : ''}`);
   }
 
-  const [shutubaHtml, pastHtml, oddsJson] = await Promise.all([
+  const [shutubaHtml, pastHtml, oddsResult] = await Promise.all([
     fetchHtml(`https://race.netkeiba.com/race/shutuba.html?race_id=${raceId}`),
     fetchHtml(`https://race.netkeiba.com/race/shutuba_past.html?race_id=${raceId}&rf=shutuba_submenu`).catch(() => ''),
-    fetchHtml(`https://race.netkeiba.com/api/api_get_jra_odds.html?race_id=${raceId}&type=1`).catch(() => ''),
+    fetchOddsDict(raceId, 1).catch(() => null),
   ]);
 
   const horses = parseShutuba(shutubaHtml);
   if (!horses.length) throw new Error('出走馬データが取得できませんでした');
   mergePast(horses, pastHtml);
-  mergeOdds(horses, oddsJson);
+  mergeOdds(horses, oddsResult);
 
   // 今回レースの馬場・距離（コース適性の集計に使う）
   const distM = shutubaHtml.match(/([芝ダ障])(\d{3,4})m/);
@@ -162,7 +167,11 @@ async function fetchRaceData(venue, date, raceNum) {
   await mergeCareers(horses, venue, surface, distance);
 
   const raceName = (shutubaHtml.match(/<title>([^|<]+?)\s*出馬表/)?.[1] || '').trim();
-  return { horses, race_name: raceName, race_id: raceId, race_surface: surface, race_distance: distance };
+  return {
+    horses, race_name: raceName, race_id: raceId,
+    race_surface: surface, race_distance: distance,
+    odds_time: oddsResult?.official || null,
+  };
 }
 
 // 各馬の戦績ページ（db.netkeiba.com/horse/result/{id}/）を並列取得して集計
@@ -265,18 +274,45 @@ function mergePast(horses, html) {
   }
 }
 
-// 単勝オッズAPI：{data:{odds:{"1":{"01":["7.4","0.0","5"],...}}}}（発売前は空）
-function mergeOdds(horses, jsonText) {
-  try {
-    const tan = JSON.parse(jsonText)?.data?.odds?.['1'];
-    if (!tan) return;
-    for (const h of horses) {
-      const e = tan[String(h.num).padStart(2, '0')];
-      if (!e) continue;
-      h.odds = parseFloat(e[0]) || null;
-      h.ninki = parseInt(e[2]) || null;
-    }
-  } catch { /* 発売前・API変更時はオッズなしで続行 */ }
+// オッズAPI（api_get_jra_odds.html）
+// action=update が最新（発売中のリアルタイム値）、init は約数十分遅れ、
+// 指定なしは確定オッズのみ。取れる方式から順に試す。
+// キーは 単勝系="1"〜"18"または"01"〜、組み合わせ系=2桁ゼロ埋め連結（馬連"0102"、3連単"100102"）
+async function fetchOddsDict(raceId, typeCode) {
+  for (const action of ['update', 'init', '']) {
+    try {
+      const url = `https://race.netkeiba.com/api/api_get_jra_odds.html?race_id=${raceId}&type=${typeCode}${action ? '&action=' + action : ''}`;
+      const j = JSON.parse(await fetchHtml(url));
+      const odds = j?.data?.odds;
+      if (odds && Object.keys(odds).length) {
+        return { odds, official: j.data.official_datetime || null, status: j.status };
+      }
+    } catch { /* 次の取得方式へ */ }
+  }
+  return null;
+}
+
+const BET_TYPE_CODE = {'単勝': 1, '複勝': 1, '枠連': 3, '馬連': 4, 'ワイド': 5, '馬単': 6, '3連複': 7, '3連単': 8};
+
+// 券種別のオッズ辞書を返す（複勝は type=1 のレスポンス内キー"2"）
+async function fetchBetOdds(raceId, bet) {
+  const code = BET_TYPE_CODE[bet] || 1;
+  const r = await fetchOddsDict(raceId, code);
+  if (!r) return { odds: null, official: null };
+  const key = bet === '複勝' ? '2' : String(code);
+  return { odds: r.odds[key] || null, official: r.official };
+}
+
+// 出走馬に単勝オッズ・人気を結合
+function mergeOdds(horses, oddsResult) {
+  const tan = oddsResult?.odds?.['1'];
+  if (!tan) return;
+  for (const h of horses) {
+    const e = tan[String(h.num)] || tan[String(h.num).padStart(2, '0')];
+    if (!e) continue;
+    h.odds = parseFloat(e[0]) || null;
+    h.ninki = parseInt(e[2]) || null;
+  }
 }
 
 function fetchHtml(url) {

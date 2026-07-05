@@ -110,6 +110,8 @@
   .yoso-kaime { font-size: 13px; font-weight: 500; color: var(--gold); margin-top: 10px; padding: 8px 10px; background: rgba(240,192,64,0.08); border-radius: var(--radius-sm); line-height: 1.8; }
   .kaime-list { font-size: 12px; font-weight: 400; color: var(--text); }
   .kaime-note { font-size: 11px; font-weight: 400; color: var(--text2); }
+  .combo { white-space: nowrap; }
+  .combo-odds { color: var(--green); font-weight: 600; font-size: 11px; margin-left: 2px; }
   .yoso-comment { font-size: 12px; color: var(--text2); margin-top: 8px; }
 
   /* Save bet form */
@@ -248,10 +250,8 @@
           <div class="pill active" onclick="setAxis(this,'馬柱')">🗒 馬柱</div>
           <div class="pill" onclick="setAxis(this,'血統')">🧬 血統</div>
           <div class="pill" onclick="setAxis(this,'騎手')">👤 騎手</div>
-          <div class="pill" onclick="setAxis(this,'タイム')">⏱ タイム</div>
-          <div class="pill" onclick="setAxis(this,'斤量')">⚖️ 斤量</div>
         </div>
-        <div class="axis-desc" id="axis-desc">馬柱軸：直近5走の着順＋直近10年の通算複勝率を中心に、オッズの市場評価も加味</div>
+        <div class="axis-desc" id="axis-desc">馬柱軸：直近5走の着順＋直近10年の通算複勝率を中心に、上がり3F・斤量の補正つき</div>
       </div>
 
       <div class="card">
@@ -359,6 +359,7 @@ const WAKU_COLORS = {
 };
 
 let horses = [];
+let currentRaceId = null;
 
 // HTMLエスケープ（スクレイピングデータをそのままDOMに入れない）
 function esc(s) {
@@ -565,7 +566,7 @@ async function loadVenues() {
     // メインレースのグレードが最も高い場をデフォルトに
     const def = [...venueInfo].sort((a, b) => b.main_rank - a.main_rank)[0];
     venueSel.innerHTML = venueInfo.map(v =>
-      `<option value="${esc(v.venue)}" ${v === def ? 'selected' : ''}>${esc(v.venue)}${v.main_grade ? `（${esc(v.main_grade)} ${esc(v.main_name)}）` : ''}</option>`
+      `<option value="${esc(v.venue)}" ${v === def ? 'selected' : ''}>${esc(v.venue)}</option>`
     ).join('');
     applyMainRace();
   } catch (e) {
@@ -631,13 +632,15 @@ async function fetchRaceData() {
     if (!json.horses?.length) throw new Error('出走馬データが取得できませんでした');
 
     horses = json.horses;
+    currentRaceId = json.race_id || null;
     renderTable();
     document.getElementById('yoso-result').style.display = 'none';
     document.getElementById('bet-form').style.display = 'none';
     // 実際のレース名で上書き（サーバーが正しい名前を知っている）
     if (json.race_name) document.getElementById('race-name').value = json.race_name;
     const time = selectedRaceTime();
-    status.textContent = `✅ ${horses.length}頭取得（${venue}${raceNum}R${json.race_name ? ' ' + json.race_name : ''}${time ? ' ／ ' + time + '発走' : ''}）`;
+    const oddsNote = json.odds_time ? ` ／ オッズ${json.odds_time.slice(11, 16)}時点` : '';
+    status.textContent = `✅ ${horses.length}頭取得（${venue}${raceNum}R${json.race_name ? ' ' + json.race_name : ''}${time ? ' ／ ' + time + '発走' : ''}${oddsNote}）`;
   } catch (e) {
     status.textContent = `❌ ${e.message}`;
     showToast('データ取得失敗: ' + e.message);
@@ -660,11 +663,9 @@ function showPage(page) {
 
 // Axis
 const axisDescs = {
-  '馬柱': '馬柱軸：直近5走の着順＋直近10年の通算複勝率を中心に、オッズの市場評価も加味',
+  '馬柱': '馬柱軸：直近5走の着順＋直近10年の通算複勝率を中心に、上がり3F・斤量の補正つき',
   '血統': '血統軸：今回と同じ馬場・距離（±200m）での過去実績＝コース適性を最重視（産駒表示つき）',
-  '騎手': '騎手軸：騎手の長期リーディング実績を最優先に、市場評価・近走成績を加味',
-  'タイム': 'タイム軸：前走の上がり3Fと同条件での過去実績を重視して評価',
-  '斤量': '斤量軸：今回の斤量の軽重を最重視し、近走・通算成績を加味',
+  '騎手': '騎手軸：騎手の長期リーディング実績を最優先に、近走・通算成績を加味',
 };
 function setAxis(el, name) {
   document.querySelectorAll('.pill').forEach(p => p.classList.remove('active'));
@@ -704,13 +705,12 @@ function jockeyRating(name) {
   return 50;
 }
 
-// 軸ごとの要素の重み
+// 軸ごとの要素の重み（オッズの市場評価は参考程度=0.1に抑える。
+// 上がり3F・斤量は独立軸ではなく馬柱の補正値として吸収）
 const AXIS_WEIGHTS = {
-  '馬柱':   {form: 0.30, career: 0.25, market: 0.25, fit: 0.10, agari: 0.10},
-  '血統':   {fit: 0.40, career: 0.20, market: 0.20, form: 0.15, agari: 0.05},
-  '騎手':   {jockey: 0.35, market: 0.25, form: 0.20, career: 0.20},
-  'タイム': {agari: 0.35, fit: 0.20, form: 0.20, market: 0.15, career: 0.10},
-  '斤量':   {kinryo: 0.30, market: 0.25, form: 0.25, career: 0.20},
+  '馬柱': {form: 0.28, career: 0.22, fit: 0.15, agari: 0.13, kinryo: 0.12, market: 0.10},
+  '血統': {fit: 0.45, career: 0.22, form: 0.15, agari: 0.08, market: 0.10},
+  '騎手': {jockey: 0.40, form: 0.25, career: 0.25, market: 0.10},
 };
 
 // 参考スコア：直近10年の実績データに基づく合成スコア
@@ -799,27 +799,37 @@ const BET_CONFIG = {
 };
 const MARK_LABELS = {'◎': '本命', '○': '対抗', '▲': '単穴', '△': '連下', '☆': '穴'};
 
+// 買い目の1点分をspanで包む（後からオッズを注釈できるようにdata-keyを持たせる）
+// kind: single=単勝系 / sorted=順不同（馬連・ワイド・3連複） / ordered=着順どおり（馬単・3連単）
+function comboSpan(kind, nums) {
+  const label = kind === 'ordered' ? nums.join('→') : nums.join('-');
+  const p = n => String(n).padStart(2, '0');
+  const key = kind === 'single' ? String(nums[0]) : (kind === 'sorted' ? [...nums].sort((a, b) => a - b) : nums).map(p).join('');
+  return `<span class="combo" data-key="${key}">${label}</span>`;
+}
+
 // 買い目テキスト（HTMLで返す。3連系は具体的な組み合わせを列挙）
 function kaimeText(betType, picks) {
   const cfg = BET_CONFIG[betType];
   if (picks.length < cfg.need) return `${betType}には最低${cfg.need + 1}頭必要です。選択を増やしてください`;
-  const n = i => picks[i] ? `${picks[i].num}番` : '';
+  const num = i => picks[i]?.num;
+  const cs = (kind, ...idx) => comboSpan(kind, idx.map(num));
   switch (betType) {
-    case '単勝':   return `単勝 ${n(0)}（1点）`;
-    case '複勝':   return `複勝 ${n(0)} 本線${picks[1] ? `／押さえ ${n(1)}` : ''}`;
-    case 'ワイド': return `ワイド ${n(0)}-${n(1)} 本線${picks[2] ? `／${n(0)}-${n(2)} 押さえ（計2点）` : '（1点）'}`;
-    case '馬連':   return `馬連 ${n(0)}-${n(1)} 本線${picks[2] ? `／${n(0)}-${n(2)}${picks[3] ? `・${n(0)}-${n(3)}` : ''} 押さえ（計${Math.min(picks.length - 1, 3)}点）` : '（1点）'}`;
-    case '馬単':   return `馬単 ${n(0)}→${n(1)} 本線${picks[2] ? `／${n(0)}→${n(2)} 押さえ（計2点）` : '（1点）'}`;
+    case '単勝':   return `単勝 ${cs('single', 0)}番（1点）`;
+    case '複勝':   return `複勝 ${cs('single', 0)}番 本線${picks[1] ? `／押さえ ${cs('single', 1)}番` : ''}`;
+    case 'ワイド': return `ワイド ${cs('sorted', 0, 1)} 本線${picks[2] ? `／${cs('sorted', 0, 2)} 押さえ（計2点）` : '（1点）'}`;
+    case '馬連':   return `馬連 ${cs('sorted', 0, 1)} 本線${picks[2] ? `／${cs('sorted', 0, 2)}${picks[3] ? `・${cs('sorted', 0, 3)}` : ''} 押さえ（計${Math.min(picks.length - 1, 3)}点）` : '（1点）'}`;
+    case '馬単':   return `馬単 ${cs('ordered', 0, 1)} 本線${picks[2] ? `／${cs('ordered', 0, 2)} 押さえ（計2点）` : '（1点）'}`;
     case '3連複': {
       // ◎軸・相手（○▲△☆）から2頭の流し
       const others = picks.slice(1);
       const combos = [];
       for (let i = 0; i < others.length; i++)
         for (let j = i + 1; j < others.length; j++)
-          combos.push(`${picks[0].num}-${others[i].num}-${others[j].num}`);
-      let t = `3連複 ◎${n(0)}軸 → 相手 ${others.map(p => p.num).join('・')} の2頭流し（${combos.length}点）`;
+          combos.push(comboSpan('sorted', [picks[0].num, others[i].num, others[j].num]));
+      let t = `3連複 ◎${num(0)}番軸 → 相手 ${others.map(p => p.num).join('・')} の2頭流し（${combos.length}点）`;
       t += `<br><span class="kaime-list">${combos.join(' ／ ')}</span>`;
-      if (others.length >= 4) t += `<br><span class="kaime-note">絞るなら本線 ${picks[0].num}-${picks[1].num}-${picks[2].num} と ${picks[0].num}-${picks[1].num}-${picks[3].num} の2点</span>`;
+      if (others.length >= 4) t += `<br><span class="kaime-note">絞るなら本線 ${num(0)}-${num(1)}-${num(2)} と ${num(0)}-${num(1)}-${num(3)} の2点</span>`;
       return t;
     }
     case '3連単': {
@@ -829,14 +839,41 @@ function kaimeText(betType, picks) {
       const combos = [];
       for (const s of second)
         for (const t3 of third)
-          if (t3 !== s) combos.push(`${picks[0].num}→${s.num}→${t3.num}`);
-      let t = `3連単フォーメーション ◎${n(0)}1着固定／2着 ${second.map(p => p.num).join('・')}／3着 ${third.map(p => p.num).join('・')}（${combos.length}点）`;
+          if (t3 !== s) combos.push(comboSpan('ordered', [picks[0].num, s.num, t3.num]));
+      let t = `3連単フォーメーション ◎${num(0)}番1着固定／2着 ${second.map(p => p.num).join('・')}／3着 ${third.map(p => p.num).join('・')}（${combos.length}点）`;
       t += `<br><span class="kaime-list">${combos.join(' ／ ')}</span>`;
-      t += `<br><span class="kaime-note">絞るなら本線 ${picks[0].num}→${picks[1].num}→${picks[2].num} の1点</span>`;
+      t += `<br><span class="kaime-note">絞るなら本線 ${num(0)}→${num(1)}→${num(2)} の1点</span>`;
       return t;
     }
   }
   return '';
+}
+
+// 買い目にその時点のオッズを注釈する（複勝・ワイドは幅表示）
+let kaimeOddsSeq = 0;
+async function loadKaimeOdds(betType) {
+  if (!currentRaceId) return;
+  const seq = ++kaimeOddsSeq;
+  const box = document.getElementById('yoso-kaime');
+  try {
+    const json = await apiGet({action: 'odds', race_id: currentRaceId, bet: betType});
+    if (seq !== kaimeOddsSeq) return;   // 券種を切り替え済みなら破棄
+    if (!json.odds) {
+      box.insertAdjacentHTML('beforeend', '<br><span class="kaime-note">オッズは発売開始後に表示されます</span>');
+      return;
+    }
+    const isRange = betType === '複勝' || betType === 'ワイド';
+    box.querySelectorAll('.combo').forEach(el => {
+      const key = el.dataset.key;
+      const e = json.odds[key] || json.odds[key.replace(/^0/, '')] || json.odds[key.padStart(2, '0')];
+      if (!e || !e[0]) return;
+      const disp = isRange && e[1] ? `${e[0]}〜${e[1]}倍` : `${e[0]}倍`;
+      el.insertAdjacentHTML('beforeend', `<span class="combo-odds">(${esc(disp)})</span>`);
+    });
+    if (json.official) {
+      box.insertAdjacentHTML('beforeend', `<br><span class="kaime-note">オッズは ${esc(String(json.official).slice(11, 16))} 時点</span>`);
+    }
+  } catch { /* オッズ取得失敗時は注釈なしのまま */ }
 }
 
 function generateYoso() {
@@ -883,6 +920,7 @@ function generateYoso() {
   }
 
   document.getElementById('yoso-kaime').innerHTML = '💡 推奨買い目：' + kaimeText(betType, picks);
+  loadKaimeOdds(betType);   // オッズは非同期で注釈
 
   const poolDesc = useSelection ? `選択した${pool.length}頭` : `全${pool.length}頭`;
   const styleNote = cfg.style === 'win' ? '。1着候補重視（勝率を加点）' : cfg.style === 'place' ? '。3着以内の安定感重視（複勝率を加点）' : '';
