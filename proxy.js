@@ -114,7 +114,7 @@ async function fetchVenues(date) {
       // グレードアイコンはレース名部分（RaceDataより手前）から取る
       const grade = parseInt(it.split('class="RaceData"')[0].match(/Icon_GradeType(\d+)/)?.[1] || '') || null;
       const time = it.match(/class="RaceList_Itemtime">\s*(\d{1,2}:\d{2})/)?.[1] || null;
-      races.push({num, title, grade, time});
+      races.push({num, title, grade, time, id: rid});
     }
     if (!races.length) continue;
     races.sort((a, b) => a.num - b.num);
@@ -128,7 +128,7 @@ async function fetchVenues(date) {
       main_grade: GRADE_LABEL[main.grade] || null,
       main_rank: GRADE_RANK[main.grade] || 0,
       main_time: main.time,
-      races: races.map(r => ({num: r.num, title: r.title, grade: GRADE_LABEL[r.grade] || null, time: r.time})),
+      races: races.map(r => ({num: r.num, title: r.title, grade: GRADE_LABEL[r.grade] || null, time: r.time, id: r.id})),
     });
   }
   if (!venues.length) throw new Error(`${date} は開催がありません`);
