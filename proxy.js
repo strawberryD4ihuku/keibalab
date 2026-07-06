@@ -53,6 +53,10 @@ const server = http.createServer(async (req, res) => {
       const raceId = url.searchParams.get('race_id') || '';
       if (!/^\d{12}$/.test(raceId)) throw Object.assign(new Error('race_id は必須です'), {status: 400});
       result = await fetchRaceResult(raceId);
+    } else if (action === 'sire') {
+      const horseId = url.searchParams.get('horse_id') || '';
+      if (!/^\w{8,12}$/.test(horseId)) throw Object.assign(new Error('horse_id は必須です'), {status: 400});
+      result = await fetchSireStats(horseId);
     } else {
       if (!date) throw Object.assign(new Error('date は必須です'), {status: 400});
       result = await fetchRaceData(venue, date, raceNum);
@@ -309,6 +313,35 @@ async function fetchOddsDict(raceId, typeCode) {
 }
 
 const BET_TYPE_CODE = {'単勝': 1, '複勝': 1, '枠連': 3, '馬連': 4, 'ワイド': 5, '馬単': 6, '3連複': 7, '3連単': 8};
+
+// 産駒成績：馬の血統ページ→父（種牡馬）ID→産駒成績ページ から
+// 馬場種別ごとの産駒 出走数・勝利数を返す（多数の産駒を集計＝頑健）
+async function fetchSireStats(horseId) {
+  // 血統ページの最初の b_ml セルが父（種牡馬）
+  const ped = await fetchHtml(`https://db.netkeiba.com/horse/ped/${horseId}/`);
+  const sireCell = ped.match(/<td[^>]*class="[^"]*b_ml[^"]*"[\s\S]*?<\/td>/)?.[0] || '';
+  const sireId = sireCell.match(/\/horse\/(\w{8,12})\//)?.[1] || null;
+  const sireName = (sireCell.match(/\/horse\/\w{8,12}\/"[^>]*>\s*([^<]+?)\s*(?:<br|<\/a)/)?.[1] || '').trim();
+  if (!sireId) return { sire_name: sireName || null, sire_id: null, turf_starts: 0, turf_win: 0, dirt_starts: 0, dirt_win: 0 };
+
+  // 産駒成績ページの race_table_01 → 「累計」行（全年合計）
+  const html = await fetchHtml(`https://db.netkeiba.com/horse/sire/${sireId}/`);
+  const tbl = html.match(/<table[^>]*class="[^"]*race_table_01[^"]*"[\s\S]*?<\/table>/)?.[0] || '';
+  let turfStarts = 0, turfWin = 0, dirtStarts = 0, dirtWin = 0;
+  for (const rm of tbl.matchAll(/<tr[^>]*>[\s\S]*?<\/tr>/g)) {
+    const cells = [...rm[0].matchAll(/<t[hd][^>]*>([\s\S]*?)<\/t[hd]>/g)]
+      .map(c => c[1].replace(/<[^>]*>/g, '').replace(/&nbsp;|,/g, '').trim());
+    if (cells[0] !== '累計' || cells.length < 16) continue;
+    // 列: 0累計 1- 2出走頭数 3勝馬頭数 4出走回数 5勝利回数 6重賞出走 7重賞勝利
+    //     8特別出走 9特別勝利 10平場出走 11平場勝利 12芝出走 13芝勝利 14ダ出走 15ダ勝利
+    turfStarts = parseInt(cells[12]) || 0;
+    turfWin = parseInt(cells[13]) || 0;
+    dirtStarts = parseInt(cells[14]) || 0;
+    dirtWin = parseInt(cells[15]) || 0;
+    break;
+  }
+  return { sire_name: sireName || null, sire_id: sireId, turf_starts: turfStarts, turf_win: turfWin, dirt_starts: dirtStarts, dirt_win: dirtWin };
+}
 
 // レース結果：全券種の払戻（100円あたり）と1〜3着馬番
 async function fetchRaceResult(raceId) {
