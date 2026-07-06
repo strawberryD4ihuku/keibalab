@@ -57,6 +57,10 @@ const server = http.createServer(async (req, res) => {
       const horseId = url.searchParams.get('horse_id') || '';
       if (!/^\w{8,12}$/.test(horseId)) throw Object.assign(new Error('horse_id は必須です'), {status: 400});
       result = await fetchSireStats(horseId);
+    } else if (action === 'jockey') {
+      const jkId = url.searchParams.get('id') || '';
+      if (!/^\w{3,10}$/.test(jkId)) throw Object.assign(new Error('id は必須です'), {status: 400});
+      result = await fetchJockeyStats(jkId);
     } else {
       if (!date) throw Object.assign(new Error('date は必須です'), {status: 400});
       result = await fetchRaceData(venue, date, raceNum);
@@ -256,12 +260,14 @@ function parseShutuba(html) {
     const name = (r.match(/class="HorseName"[\s\S]*?<a[^>]*title="([^"]+)"/)?.[1] ||
                   r.match(/class="HorseName"[\s\S]*?<a[^>]*>\s*([^<]+?)\s*</)?.[1] || '').trim();
     const horseId = r.match(/db\.netkeiba\.com\/horse\/(\d+)/)?.[1] || null;
-    const jockey = (r.match(/class="Jockey"[\s\S]*?<a[^>]*>\s*([^<]+?)\s*</)?.[1] || '—').trim();
+    const jockeyCell = r.match(/class="Jockey"[\s\S]*?<\/td>/)?.[0] || '';
+    const jockey = (jockeyCell.match(/<a[^>]*>\s*([^<]+?)\s*</)?.[1] || '—').trim();
+    const jockeyId = jockeyCell.match(/\/jockey\/(?:result\/recent\/)?(\w+)\//)?.[1] || null;
     // 斤量：性齢（Barei）セルの次のセルにある数値
     const kinryo = parseFloat(r.match(/class="Barei[^"]*"[\s\S]*?<\/td>\s*<td[^>]*>\s*(\d{2}(?:\.\d)?)\s*</)?.[1]) || null;
     if (!num || !name) continue;
     horses.push({
-      num, waku: waku || Math.ceil(num / 2), name, jockey, horseId, kinryo,
+      num, waku: waku || Math.ceil(num / 2), name, jockey, jockeyId, horseId, kinryo,
       p1: null, p2: null, p3: null, p4: null, p5: null,
       age3f: null, odds: null, ninki: null, sire: null, career: null,
     });
@@ -341,6 +347,30 @@ async function fetchSireStats(horseId) {
     break;
   }
   return { sire_name: sireName || null, sire_id: sireId, turf_starts: turfStarts, turf_win: turfWin, dirt_starts: dirtStarts, dirt_win: dirtWin };
+}
+
+// 騎手成績：プロフィールの年度別成績から直近（約300騎乗ぶん）の
+// 騎乗回数と3着内数を集計。全騎手をカバーし現在の調子を反映
+async function fetchJockeyStats(jkId) {
+  const html = await fetchHtml(`https://db.netkeiba.com/jockey/${jkId}/`);
+  const name = (html.match(/<title>\s*([^<|｜]+?)\s*のプロフィール/)?.[1] || '').trim();
+  const tbl = html.match(/<table[^>]*class="[^"]*ResultsByYears[^"]*"[\s\S]*?<\/table>/)?.[0] || '';
+  const rows = [...tbl.matchAll(/<tr[^>]*>[\s\S]*?<\/tr>/g)];
+  let rides = 0, top3 = 0, cRides = 0, cTop3 = 0;
+  for (const rm of rows) {
+    const cells = [...rm[0].matchAll(/<t[hd][^>]*>([\s\S]*?)<\/t[hd]>/g)]
+      .map(c => c[1].replace(/<[^>]*>/g, '').replace(/&nbsp;|,/g, '').trim());
+    // 列: 0年度 1順位 2:1着 3:2着 4:3着 5:4着〜 6騎乗回数
+    if (cells.length < 7) continue;
+    const t3 = (parseInt(cells[2]) || 0) + (parseInt(cells[3]) || 0) + (parseInt(cells[4]) || 0);
+    const rd = parseInt(cells[6]) || 0;
+    if (cells[0] === '累計') { cTop3 = t3; cRides = rd; continue; }
+    if (!/^\d{4}$/.test(cells[0])) continue;   // 年度行のみ（新しい年が上）
+    if (rides < 300) { rides += rd; top3 += t3; }   // 直近約300騎乗まで積む
+  }
+  // 直近が薄い（引退・若手など）場合は通算にフォールバック
+  if (rides < 50) { rides = cRides; top3 = cTop3; }
+  return { jockey_id: jkId, jockey_name: name || null, rides, top3 };
 }
 
 // レース結果：全券種の払戻（100円あたり）と1〜3着馬番

@@ -704,7 +704,7 @@ async function fetchRaceData() {
     const time = selectedRaceTime();
     const oddsNote = json.odds_time ? ` ／ オッズ${json.odds_time.slice(11, 16)}時点` : '';
     status.textContent = `✅ ${horses.length}頭取得（${venue}${raceNum}R${json.race_name ? ' ' + json.race_name : ''}${time ? ' ／ ' + time + '発走' : ''}${oddsNote}）`;
-    enrichSires(status.textContent);   // 産駒成績を裏で取得してスコアに反映（表は先に表示済み）
+    enrichHorses(status.textContent);   // 産駒・騎手成績を裏で取得してスコアに反映（表は先に表示済み）
   } catch (e) {
     status.textContent = `❌ ${e.message}`;
     showToast('データ取得失敗: ' + e.message);
@@ -712,6 +712,65 @@ async function fetchRaceData() {
     btn.disabled = false;
     btn.style.opacity = '';
   }
+}
+
+// 産駒成績と騎手成績を順に取得してスコアへ反映（表は先に表示済み）
+async function enrichHorses(baseStatus) {
+  await enrichSires(baseStatus);
+  await enrichJockeys(baseStatus);
+}
+
+// 騎手成績を取得してスコアに反映する（産駒と同じキャッシュ機構）。
+// 騎手IDごとに1回だけ取得し、localStorage＋Supabase(jockey_stats)にキャッシュ。
+async function enrichJockeys(baseStatus) {
+  if (!horses.length) return;
+  const status = document.getElementById('fetch-status');
+  const byId = {};
+  for (const h of horses) if (h.jockeyId) (byId[h.jockeyId] = byId[h.jockeyId] || []).push(h);
+  const ids = Object.keys(byId);
+  if (!ids.length) return;
+
+  const stats = {};
+  const missing = [];
+  for (const id of ids) {
+    const ls = localStorage.getItem('kljk:' + id);
+    if (ls) { try { stats[id] = JSON.parse(ls); continue; } catch { /* 壊れたキャッシュは取り直す */ } }
+    missing.push(id);
+  }
+  if (missing.length && currentUser) {
+    try {
+      const {data} = await sb.from('jockey_stats').select('*').in('jockey_id', missing);
+      for (const row of (data || [])) {
+        stats[row.jockey_id] = row;
+        localStorage.setItem('kljk:' + row.jockey_id, JSON.stringify(row));
+      }
+    } catch { /* オフライン等はnetkeiba取得にフォールバック */ }
+  }
+  const toFetch = ids.filter(id => !stats[id]);
+
+  let done = 0;
+  const toSave = [];
+  await mapLimitClient(toFetch, 2, async (id) => {
+    try {
+      const s = await apiGet({action: 'jockey', id});
+      const rec = {jockey_id: id, jockey_name: s.jockey_name, rides: s.rides, top3: s.top3};
+      stats[id] = rec;
+      localStorage.setItem('kljk:' + id, JSON.stringify(rec));
+      toSave.push(rec);
+    } catch { /* 個別失敗はスキップ */ }
+    finally {
+      done++;
+      if (toFetch.length) status.textContent = `${baseStatus || ''}｜騎手成績 ${done}/${toFetch.length}`;
+    }
+  });
+  if (toSave.length && currentUser) {
+    sb.from('jockey_stats').upsert(toSave, {onConflict: 'jockey_id'}).then(() => {}, () => {});
+  }
+
+  for (const h of horses) if (h.jockeyId && stats[h.jockeyId]) h.jockeyStats = stats[h.jockeyId];
+  if (baseStatus) status.textContent = baseStatus;
+  renderTable();
+  if (document.getElementById('yoso-result').style.display !== 'none') generateYoso();
 }
 
 // 産駒成績を取得してスコアに反映する。
@@ -826,12 +885,20 @@ function jockeyRating(name) {
   return 50;
 }
 
+// 騎手補正：直近の複勝率を平均22%基準に0-100化（少数騎乗は縮小補正）。
+// netkeibaから取得した実データがあればそれを、なければ固定レーティングを使う
+function jockeyRateComp(s) {
+  if (!s || !s.rides) return null;
+  const rate = (s.top3 + 20) / (s.rides + 90);
+  return Math.max(5, Math.min(99, Math.round(50 + (rate - 0.22) * 230)));
+}
+
 // 軸ごとの要素の重み（オッズの市場評価は参考程度=0.1以下に抑える。
 // 上がり3F・斤量は独立軸ではなく馬柱の補正値として吸収。
 // 「同コース実績」= fit(同馬場・距離)＋venueFit(同競馬場) を厚めに配分。
 // sireFit = 種牡馬の産駒が今回の馬場で走るか。血統軸で特に重視）
 const AXIS_WEIGHTS = {
-  '馬柱': {form: 0.21, career: 0.17, fit: 0.20, venueFit: 0.11, sireFit: 0.08, agari: 0.09, kinryo: 0.08, market: 0.06},
+  '馬柱': {form: 0.20, career: 0.16, fit: 0.19, venueFit: 0.10, sireFit: 0.08, jockey: 0.08, agari: 0.08, kinryo: 0.06, market: 0.05},
   '血統': {fit: 0.30, sireFit: 0.22, venueFit: 0.10, career: 0.15, form: 0.11, agari: 0.05, market: 0.07},
   '騎手': {jockey: 0.34, form: 0.20, career: 0.18, fit: 0.12, venueFit: 0.08, market: 0.08},
 };
@@ -868,7 +935,7 @@ function computeScore(h) {
     venueFit: c && c.venueN > 0 ? Math.min(100, Math.round((c.venueP3 + 1.5) / (c.venueN + 6) * 200)) : null,
     sireFit: sireFitComp(h),
     agari: h.age3f ? Math.max(0, Math.min(100, Math.round((37.5 - h.age3f) * 25))) : null,
-    jockey: jockeyRating(h.jockey),
+    jockey: (h.jockeyStats && h.jockeyStats.rides) ? jockeyRateComp(h.jockeyStats) : jockeyRating(h.jockey),
     kinryo: h.kinryo ? Math.max(0, Math.min(100, Math.round(50 + (56 - h.kinryo) * 12))) : null,
     form: null,
   };
@@ -1301,8 +1368,9 @@ function comboPayout(betType, combo, payouts) {
 let reportRunning = false;
 
 // スコアリングを変えたらバージョンを上げてキャッシュ・DB蓄積を再検証させる
-// （v1: 特徴量なしの旧形式 → v2: 特徴量つき → v3: 同コース実績強化 → v4: 産駒補正追加）
-const REPORT_CACHE_VER = 'klverify:v4:';
+// （v1: 特徴量なしの旧形式 → v2: 特徴量つき → v3: 同コース実績強化
+//   → v4: 産駒補正追加 → v5: 騎手を実データ複勝率に）
+const REPORT_CACHE_VER = 'klverify:v5:';
 
 async function mapLimitClient(items, limit, fn) {
   const queue = [...items];
