@@ -164,6 +164,8 @@
   .empty { text-align: center; color: var(--text3); padding: 2rem; font-size: 13px; }
   .loading { text-align: center; color: var(--text2); padding: 1rem; font-size: 13px; }
   .bet-horses { font-size: 11px; color: var(--text3); white-space: nowrap; }
+  .horse-link { color: var(--text); text-decoration: none; border-bottom: 1px dotted var(--text3); }
+  .horse-link:hover { color: var(--accent); border-bottom-color: var(--accent); }
 
   @media (max-width: 640px) {
     .topbar { padding: 0 0.6rem; gap: 6px; }
@@ -970,7 +972,7 @@ function renderTable() {
       <td><span style="color:${sel?'var(--accent)':'var(--text3)'}">●</span></td>
       <td><span class="waku-num" style="background:${wk.bg};color:${wk.fg}">${h.waku}</span></td>
       <td><strong>${h.num}</strong></td>
-      <td style="text-align:left;font-weight:500;white-space:nowrap">${esc(h.name)}${currentAxis === '血統' && h.sire ? `<div style="font-size:11px;font-weight:400;color:var(--gold)">${esc(h.sire)}産駒</div>` : ''}</td>
+      <td style="text-align:left;font-weight:500;white-space:nowrap">${h.horseId ? `<a href="https://db.netkeiba.com/horse/${esc(h.horseId)}/" target="_blank" rel="noopener" class="horse-link" onclick="event.stopPropagation()">${esc(h.name)}</a>` : esc(h.name)}${currentAxis === '血統' && h.sire ? `<div style="font-size:11px;font-weight:400;color:var(--gold)">${esc(h.sire)}産駒</div>` : ''}</td>
       <td style="color:var(--text2);white-space:nowrap">${esc(h.jockey)}</td>
       <td>${fmtRank(h.p1)}</td>
       <td>${fmtRank(h.p2)}</td>
