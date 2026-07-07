@@ -4,6 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>KeibaLab</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='0' y2='1'%3E%3Cstop offset='0' stop-color='%235a97f8'/%3E%3Cstop offset='1' stop-color='%232d6be4'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='64' height='64' rx='15' fill='url(%23g)'/%3E%3Ctext x='32' y='46' font-size='36' text-anchor='middle'%3E🏇%3C/text%3E%3C/svg%3E">
+<meta name="theme-color" content="#4f8ef7">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <style>
@@ -250,6 +252,7 @@
           <button class="btn-yoso" style="width:auto" id="fetch-btn" onclick="fetchRaceData()">🔄 出馬表を取得</button>
           <span id="fetch-status" style="font-size:12px;color:var(--text2)"></span>
         </div>
+        <div id="entry-notice" class="axis-desc" style="display:none;margin-top:10px;border-left-color:var(--gold);color:var(--gold)"></div>
       </div>
 
       <div class="card">
@@ -601,6 +604,21 @@ async function loadKaisai() {
   }
 }
 
+// 出馬表の公開状況を知らせる（開催予定はカレンダーで分かるが、
+// 出馬表は通常開催の2〜3日前に公開されるため、それまでは取得できない）
+function setEntryNotice(msg) {
+  const el = document.getElementById('entry-notice');
+  const btn = document.getElementById('fetch-btn');
+  if (msg) {
+    el.textContent = msg;
+    el.style.display = 'block';
+    if (btn) { btn.disabled = true; btn.style.opacity = '0.5'; }
+  } else {
+    el.style.display = 'none';
+    if (btn) { btn.disabled = false; btn.style.opacity = ''; }
+  }
+}
+
 // 選択した日に開催中の競馬場だけを選択肢にする
 async function loadVenues() {
   const date = document.getElementById('race-date').value;
@@ -610,6 +628,8 @@ async function loadVenues() {
   try {
     const json = await apiGet({action: 'venues', date});
     venueInfo = json.venues || [];
+    if (!venueInfo.length) throw new Error('empty');
+    setEntryNotice('');
     // メインレースのグレードが最も高い場をデフォルトに
     const def = [...venueInfo].sort((a, b) => b.main_rank - a.main_rank)[0];
     venueSel.innerHTML = venueInfo.map(v =>
@@ -617,8 +637,18 @@ async function loadVenues() {
     ).join('');
     applyMainRace();
   } catch (e) {
-    venueSel.innerHTML = '';
-    showToast('開催場の取得失敗: ' + e.message);
+    // カレンダーが開催を知っているなら「まだ未公開」、知らないなら本当に取得失敗
+    venueInfo = [];
+    const cal = kaisaiDates.find(d => d.date === date);
+    const dt = new Date(date + 'T00:00:00');
+    const isFuture = date > fmtDateStr(new Date());
+    if (cal && cal.venues?.length && isFuture) {
+      venueSel.innerHTML = cal.venues.map(v => `<option value="${esc(v)}">${esc(v)}（未公開）</option>`).join('');
+      setEntryNotice(`📅 ${dt.getMonth()+1}/${dt.getDate()}は ${cal.venues.join('・')} で開催予定ですが、出馬表はまだ公開されていません。通常は開催の2〜3日前（木〜金頃）に公開されます。`);
+    } else {
+      venueSel.innerHTML = '';
+      setEntryNotice('この日の開催データを取得できませんでした。時間をおいて再度お試しください。');
+    }
   }
 }
 
@@ -972,8 +1002,8 @@ function renderTable() {
       <td><span style="color:${sel?'var(--accent)':'var(--text3)'}">●</span></td>
       <td><span class="waku-num" style="background:${wk.bg};color:${wk.fg}">${h.waku}</span></td>
       <td><strong>${h.num}</strong></td>
-      <td style="text-align:left;font-weight:500;white-space:nowrap">${h.horseId ? `<a href="https://db.netkeiba.com/horse/${esc(h.horseId)}/" target="_blank" rel="noopener" class="horse-link" onclick="event.stopPropagation()">${esc(h.name)}</a>` : esc(h.name)}${currentAxis === '血統' && h.sire ? `<div style="font-size:11px;font-weight:400;color:var(--gold)">${esc(h.sire)}産駒</div>` : ''}</td>
-      <td style="color:var(--text2);white-space:nowrap">${esc(h.jockey)}</td>
+      <td style="text-align:left;font-weight:500;white-space:nowrap">${h.horseId ? `<a href="https://db.netkeiba.com/horse/${esc(h.horseId)}/" target="_blank" rel="noopener" class="horse-link" onclick="event.stopPropagation()">${esc(h.name)}</a>` : esc(h.name)}${currentAxis === '血統' && h.sire ? `<div style="font-size:11px;font-weight:400;color:var(--gold)">${h.sireStats?.sire_id ? `<a href="https://db.netkeiba.com/horse/${esc(h.sireStats.sire_id)}/" target="_blank" rel="noopener" class="horse-link" style="color:var(--gold);border-bottom-color:rgba(240,192,64,0.4)" onclick="event.stopPropagation()">${esc(h.sire)}</a>` : esc(h.sire)}産駒</div>` : ''}</td>
+      <td style="color:var(--text2);white-space:nowrap">${h.jockeyId ? `<a href="https://db.netkeiba.com/jockey/${esc(h.jockeyId)}/" target="_blank" rel="noopener" class="horse-link" style="color:var(--text2)" onclick="event.stopPropagation()">${esc(h.jockey)}</a>` : esc(h.jockey)}</td>
       <td>${fmtRank(h.p1)}</td>
       <td>${fmtRank(h.p2)}</td>
       <td>${fmtRank(h.p3)}</td>
