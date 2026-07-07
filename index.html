@@ -85,6 +85,13 @@
   .pill.active { background: rgba(79,142,247,0.15); border-color: var(--accent); color: var(--accent); font-weight: 500; }
   .axis-desc { font-size: 12px; color: var(--text2); background: var(--bg3); border-radius: var(--radius-sm); padding: 8px 12px; margin-bottom: 1rem; border-left: 2px solid var(--accent); }
 
+  /* Progress bar */
+  .progress-wrap { display: none; align-items: center; gap: 10px; flex: 1; min-width: 220px; }
+  .progress-wrap.show { display: flex; }
+  .progress-track { flex: 1; height: 8px; background: var(--bg3); border-radius: 100px; overflow: hidden; min-width: 100px; }
+  .progress-fill { height: 100%; width: 0%; background: linear-gradient(90deg, var(--green), #5fe0a8); border-radius: 100px; transition: width 0.25s ease; }
+  .progress-label { font-size: 12px; color: var(--text2); white-space: nowrap; }
+
   /* Uma table */
   .table-wrap { overflow-x: auto; }
   table { width: 100%; border-collapse: collapse; font-size: 13px; }
@@ -339,7 +346,7 @@
         <div class="card-title"><span style="white-space:nowrap">📈 今週のAI成績</span> <span style="color:var(--text3);font-weight:400;margin-left:4px">（直近7日の全レースを、AIの買い目どおり買っていたら？）</span></div>
         <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
           <button class="btn-yoso" style="width:auto" id="report-btn" onclick="runWeeklyReport()">📊 今週の結果を集計</button>
-          <span id="report-progress" style="font-size:12px;color:var(--text2)"></span>
+          <div id="report-progress" class="progress-wrap"><div class="progress-track"><div class="progress-fill"></div></div><span class="progress-label"></span></div>
         </div>
         <div style="font-size:11px;color:var(--text3);margin-top:6px">初回は数分かかります（1レースずつ予想を再現するため）。集計した結果は自動でためられ、下の「おいしい買い方さがし」の材料になります。</div>
         <div id="report-out" style="margin-top:1rem"></div>
@@ -350,7 +357,7 @@
         <div style="display:flex;align-items:flex-end;gap:10px;flex-wrap:wrap">
           <button class="btn-save" style="width:auto" id="grid-btn" onclick="runGridSearch()">💰 おいしい買い方をさがす</button>
           <div class="field" style="width:150px"><label>最低レース数（少ないとマグレが混ざります）</label><input type="number" id="grid-minn" value="50" min="5" step="5"></div>
-          <span id="strategy-progress" style="font-size:12px;color:var(--text2)"></span>
+          <div id="strategy-progress" class="progress-wrap"><div class="progress-track"><div class="progress-fill"></div></div><span class="progress-label"></span></div>
         </div>
         <div id="strategy-stats" style="font-size:11px;color:var(--text3);margin-top:6px"></div>
         <details style="margin-top:8px">
@@ -1411,6 +1418,24 @@ async function mapLimitClient(items, limit, fn) {
   }));
 }
 
+// 進捗バー（緑のゲージ）の表示・更新・非表示
+function setProgressBar(elId, percent, label) {
+  const el = document.getElementById(elId);
+  if (!el) return;
+  el.classList.add('show');
+  const fill = el.querySelector('.progress-fill');
+  const lbl = el.querySelector('.progress-label');
+  if (fill) fill.style.width = Math.max(2, Math.min(100, percent)) + '%';
+  if (lbl) lbl.textContent = label || '';
+}
+function hideProgressBar(elId) {
+  const el = document.getElementById(elId);
+  if (!el) return;
+  el.classList.remove('show');
+  const fill = el.querySelector('.progress-fill');
+  if (fill) fill.style.width = '0%';
+}
+
 // 1レース分の検証レコード（特徴量＋券種別損益）を組み立てる
 function buildVerifyRow(r, data, res) {
   const ranked = rankForBet(data.horses, BET_CONFIG['馬連']);
@@ -1483,28 +1508,29 @@ async function runWeeklyReport() {
   if (reportRunning) return;
   reportRunning = true;
   const btn = document.getElementById('report-btn');
-  const progEl = document.getElementById('report-progress');
+  const progId = 'report-progress';
   const outEl = document.getElementById('report-out');
   btn.disabled = true;
   btn.style.opacity = '0.5';
   outEl.innerHTML = '';
   try {
-    progEl.textContent = '開催日を取得中...';
+    setProgressBar(progId, 2, '開催日を取得中...');
     const {dates} = await apiGet({action: 'kaisai'});
     const now = new Date();
     const todayStr = fmtDateStr(now);
     const weekAgoStr = fmtDateStr(new Date(now.getTime() - 7 * 86400 * 1000));
     const targets = (dates || []).filter(d => d.date <= todayStr && d.date >= weekAgoStr);
     if (!targets.length) {
-      progEl.textContent = '';
+      hideProgressBar(progId);
       outEl.innerHTML = '<div class="empty">直近7日間に開催がありません</div>';
       return;
     }
 
-    // 対象レース = 直近7日の全レース
+    // 対象レース = 直近7日の全レース（このフェーズは全体の2〜15%を割り当て）
     const races = [];
-    for (const d of targets) {
-      progEl.textContent = `${d.date} の開催情報を取得中...`;
+    for (let i = 0; i < targets.length; i++) {
+      const d = targets[i];
+      setProgressBar(progId, 2 + (i / targets.length) * 13, `${d.date} の開催情報を取得中...`);
       try {
         const {venues} = await apiGet({action: 'venues', date: d.date});
         for (const v of venues || [])
@@ -1530,6 +1556,7 @@ async function runWeeklyReport() {
     };
 
     // 3レース並列で検証。確定済みレースの結果はブラウザにキャッシュして2回目以降は即表示
+    // このフェーズが本体（全体の15〜95%）
     const rowsToSave = [];
     await mapLimitClient(races, 3, async (r) => {
       const base = {date: r.date, venue: r.venue, num: r.num, name: r.name};
@@ -1542,17 +1569,17 @@ async function runWeeklyReport() {
         detail.push({...base, note: '取得失敗'});
       } finally {
         done++;
-        progEl.textContent = `検証中 ${done}/${races.length}...`;
+        setProgressBar(progId, 15 + (done / races.length) * 80, `検証中 ${done}/${races.length}...`);
       }
     });
 
-    progEl.textContent = '結果を保存中...';
+    setProgressBar(progId, 97, '結果を保存中...');
     await saveVerifyRows(rowsToSave).catch(() => {});
-    progEl.textContent = '';
+    hideProgressBar(progId);
     detail.sort((a, b) => a.date.localeCompare(b.date) || a.venue.localeCompare(b.venue) || a.num - b.num);
     renderReport(agg, detail, outEl);
   } catch (e) {
-    progEl.textContent = '';
+    hideProgressBar(progId);
     outEl.innerHTML = `<div class="empty">検証に失敗しました：${esc(e.message)}</div>`;
   } finally {
     reportRunning = false;
@@ -1669,37 +1696,41 @@ async function runBackfill() {
   if (!fromStr || !toStr || fromStr > toStr) { showToast('期間を正しく指定してください'); return; }
   backfillRunning = true;
   const btn = document.getElementById('bf-btn');
-  const progEl = document.getElementById('strategy-progress');
+  const progId = 'strategy-progress';
   btn.disabled = true;
   btn.style.opacity = '0.5';
   try {
     // 旧キャッシュがあればまず移行（netkeiba側が過去データの提供を終了していても救える）
-    progEl.textContent = '以前の集計結果を取り込み中...';
+    setProgressBar(progId, 2, '以前の集計結果を取り込み中...');
     const migrated = await migrateV1Cache().catch(() => 0);
     if (migrated) showToast(`以前の集計結果から${migrated}レース分を取り込みました`);
-    // 期間内の開催日（月ごとにカレンダーを取得）
+    // 期間内の開催日（月ごとにカレンダーを取得。このフェーズは2〜10%）
     const todayStr = fmtDateStr(new Date());
     const months = [];
     for (let d = new Date(fromStr + 'T00:00:00'); fmtDateStr(d).slice(0, 7) <= toStr.slice(0, 7); d.setMonth(d.getMonth() + 1, 1)) {
       months.push([d.getFullYear(), d.getMonth() + 1]);
     }
     const dates = [];
-    for (const [y, m] of months) {
-      progEl.textContent = `${y}年${m}月の開催日を取得中...`;
+    for (let i = 0; i < months.length; i++) {
+      const [y, m] = months[i];
+      setProgressBar(progId, 2 + (i / months.length) * 8, `${y}年${m}月の開催日を取得中...`);
       try {
         const j = await apiGet({action: 'kaisai', year: y, month: m});
         for (const d of j.dates || []) if (d.date >= fromStr && d.date <= toStr && d.date <= todayStr) dates.push(d.date);
       } catch { /* この月はスキップ */ }
     }
-    if (!dates.length) { progEl.textContent = ''; showToast('期間内に開催がありません'); return; }
+    if (!dates.length) { hideProgressBar(progId); showToast('期間内に開催がありません'); return; }
 
     // 既にDBにあるレースはスキップ
+    setProgressBar(progId, 10, '取り込み済みレースを確認中...');
     const {data: existing} = await sb.from('verify_results').select('race_id').gte('date', fromStr).lte('date', toStr);
     const have = new Set((existing || []).map(x => x.race_id));
 
+    // レース一覧の取得（このフェーズは12〜25%）
     const races = [];
-    for (const dt of dates) {
-      progEl.textContent = `${dt} のレース一覧を取得中...`;
+    for (let i = 0; i < dates.length; i++) {
+      const dt = dates[i];
+      setProgressBar(progId, 12 + (i / dates.length) * 13, `${dt} のレース一覧を取得中...`);
       try {
         const {venues} = await apiGet({action: 'venues', date: dt});
         for (const v of venues || [])
@@ -1707,8 +1738,9 @@ async function runBackfill() {
             if (rc.id && !have.has(rc.id)) races.push({date: dt, venue: v.venue, num: rc.num, name: rc.title || '', id: rc.id});
       } catch { /* この日はスキップ */ }
     }
-    if (!races.length) { progEl.textContent = ''; showToast('この期間のレースはすべて取り込み済みです'); await loadStrategyStats(); return; }
+    if (!races.length) { hideProgressBar(progId); showToast('この期間のレースはすべて取り込み済みです'); await loadStrategyStats(); return; }
 
+    // 本体：レース検証（25〜95%）
     let done = 0, saved = 0, pend = 0, fail = 0;
     const buffer = [];
     await mapLimitClient(races, 3, async (r) => {
@@ -1720,15 +1752,15 @@ async function runBackfill() {
       } catch { fail++; }
       finally {
         done++;
-        progEl.textContent = `取り込み中 ${done}/${races.length}（保存${saved}・未確定${pend}・失敗${fail}）`;
+        setProgressBar(progId, 25 + (done / races.length) * 70, `取り込み中 ${done}/${races.length}（保存${saved}・未確定${pend}・失敗${fail}）`);
       }
     });
     if (buffer.length) { saved += buffer.length; await saveVerifyRows(buffer); }
-    progEl.textContent = '';
+    hideProgressBar(progId);
     showToast(`取り込み完了: ${saved}レース保存（未確定${pend}・失敗${fail}）`);
     await loadStrategyStats();
   } catch (e) {
-    progEl.textContent = '';
+    hideProgressBar(progId);
     showToast('取り込みに失敗しました: ' + e.message);
   } finally {
     backfillRunning = false;
@@ -1848,25 +1880,27 @@ async function runGridSearch() {
   if (gridRunning) return;
   gridRunning = true;
   const btn = document.getElementById('grid-btn');
-  const progEl = document.getElementById('strategy-progress');
+  const progId = 'strategy-progress';
   const outEl = document.getElementById('strategy-out');
   btn.disabled = true;
   btn.style.opacity = '0.5';
   try {
-    progEl.textContent = 'ためたデータを読み込み中...';
+    setProgressBar(progId, 10, 'ためたデータを読み込み中...');
     const records = await loadAllVerifyRows();
     if (!records.length) {
+      hideProgressBar(progId);
       outEl.innerHTML = '<div class="empty">まだデータがありません。先に上の「今週の結果を集計」を実行してください</div>';
       return;
     }
     const minN = Math.max(5, parseInt(document.getElementById('grid-minn').value) || 50);
-    progEl.textContent = `${records.length}レース分から「いつ・何を買うと増えるか」を調べています...`;
+    setProgressBar(progId, 60, `${records.length}レース分から「いつ・何を買うと増えるか」を調べています...`);
     await new Promise(r => setTimeout(r, 30));   // 進捗表示を反映させる
     const segs = gridSearch(records, minN);
+    setProgressBar(progId, 95, '結果をまとめています...');
     renderGridSearch(segs, records.length, minN, outEl);
-    progEl.textContent = '';
+    hideProgressBar(progId);
   } catch (e) {
-    progEl.textContent = '';
+    hideProgressBar(progId);
     outEl.innerHTML = `<div class="empty">探索に失敗しました：${esc(e.message)}</div>`;
   } finally {
     gridRunning = false;
