@@ -256,8 +256,8 @@
           <div class="field"><label>レース番号（発走時刻）</label><select id="race-num" onchange="applyRaceSelection()"><option>1R</option><option>2R</option><option>3R</option><option>4R</option><option>5R</option><option>6R</option><option>7R</option><option>8R</option><option>9R</option><option>10R</option><option selected>11R</option><option>12R</option></select></div>
           <div class="field"><label>レース名</label><input type="text" id="race-name" placeholder="エプソムC G3"></div>
         </div>
-        <div style="margin-top:10px;display:flex;align-items:center;gap:12px">
-          <button class="btn-yoso" style="width:auto" id="fetch-btn" onclick="fetchRaceData()">🔄 出馬表を取得</button>
+        <div style="margin-top:10px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+          <button class="btn-yoso" id="fetch-btn" onclick="fetchRaceData()">🔄 出馬表を取得</button>
           <span id="fetch-status" style="font-size:12px;color:var(--text2)"></span>
         </div>
         <div id="entry-notice" class="axis-desc" style="display:none;margin-top:10px;border-left-color:var(--gold);color:var(--gold)"></div>
