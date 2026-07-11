@@ -1,3 +1,7 @@
 node_modules/
 supabase/.temp/
 .claude/settings.local.json
+# JRA-VANの生データ（再配布禁止のためコミットしない）
+jvdata/
+jvdata2/
+jvdata*/
