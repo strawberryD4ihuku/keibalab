@@ -9,6 +9,7 @@
 'use strict';
 const fs = require('fs');
 const path = require('path');
+const readline = require('readline');
 const iconv = require('iconv-lite');
 
 // ---- 引数 ----
@@ -75,20 +76,34 @@ const num = (b, off, len) => {
   const s = g(b, off, len).trim();
   return /^\d+$/.test(s) ? parseInt(s, 10) : 0;
 };
-function readLines(file) {
+// 巨大ファイル（数GB）でも読めるよう1行ずつストリーミングで返す
+async function* readLines(file) {
   const p = path.join(DIR, file);
-  if (!fs.existsSync(p)) return [];
-  return fs.readFileSync(p, 'utf8').split('\n').filter(Boolean).map(l => iconv.encode(l, 'cp932'));
+  if (!fs.existsSync(p)) return;
+  const rl = readline.createInterface({input: fs.createReadStream(p, {encoding: 'utf8'}), crlfDelay: Infinity});
+  for await (const line of rl) {
+    if (line) yield iconv.encode(line, 'cp932');
+  }
 }
 
+// グレードコード→表示名（D=グレードなし重賞 / E=リステッド以外の特別・平場は空白）
+const GRADE = {A: 'G1', B: 'G2', C: 'G3', D: '重賞', F: 'JG1', G: 'JG2', H: 'JG3', L: 'L'};
+// 競走条件コード（5枠目=最若年条件）→ クラス名
+const JYOKEN = {'701': '新馬', '702': '新馬', '703': '未勝利', '005': '1勝', '010': '2勝', '016': '3勝', '999': 'OP'};
+const BABA = {1: '良', 2: '稍重', 3: '重', 4: '不良'};
+
 // ---- RA: レース情報（キー→最後のレコードを採用） ----
-function parseRA() {
+async function parseRA() {
   const races = new Map();
-  for (const b of readLines('RA.txt')) {
+  for await (const b of readLines('RA.txt')) {
+    if (b.length < 890) continue;   // 途中で切れた行はスキップ
     const key = g(b, 11, 27 - 11);
     const venueCode = key.slice(8, 10);
     if (!VENUE[venueCode]) continue;   // 地方・海外はスキップ
     const track = num(b, 705, 2);
+    const surface = track >= 51 ? '障' : track >= 23 ? 'ダ' : track >= 10 ? '芝' : null;
+    // 馬場状態：ダートはダ馬場、芝・障は芝馬場（0=未設定はもう一方で補完）
+    const babaCD = surface === 'ダ' ? (num(b, 889, 1) || num(b, 888, 1)) : (num(b, 888, 1) || num(b, 889, 1));
     races.set(key, {
       key,
       date: `${key.slice(0, 4)}-${key.slice(4, 6)}-${key.slice(6, 8)}`,
@@ -97,17 +112,20 @@ function parseRA() {
       raceNum: parseInt(key.slice(14, 16), 10),
       raceId: key.slice(0, 4) + key.slice(8, 16),   // netkeiba互換12桁
       distance: num(b, 697, 4) || null,
-      surface: track >= 51 ? '障' : track >= 23 ? 'ダ' : track >= 10 ? '芝' : null,
+      surface,
       field: num(b, 883, 2) || null,
+      baba: BABA[babaCD] || null,
+      raceClass: GRADE[g(b, 614, 1)] || JYOKEN[g(b, 634, 3)] || null,
     });
   }
   return races;
 }
 
 // ---- SE: 出走馬（キー＋馬番→最後のレコードを採用） ----
-function parseSE() {
+async function parseSE() {
   const entries = new Map();
-  for (const b of readLines('SE.txt')) {
+  for await (const b of readLines('SE.txt')) {
+    if (b.length < 400) continue;
     const key = g(b, 11, 16);
     if (!VENUE[key.slice(8, 10)]) continue;
     const umaban = num(b, 28, 2);
@@ -130,7 +148,7 @@ function parseSE() {
 }
 
 // ---- HR: 払戻（フロントの comboPayout 互換形式に変換） ----
-function parseHR() {
+async function parseHR() {
   const BLOCKS = [
     {bet: '単勝', start: 102, count: 3, numLen: 2, yenLen: 9, ninLen: 2},
     {bet: '複勝', start: 141, count: 5, numLen: 2, yenLen: 9, ninLen: 2},
@@ -141,7 +159,7 @@ function parseHR() {
     {bet: '3連単', start: 603, count: 6, numLen: 6, yenLen: 9, ninLen: 4},
   ];
   const payoutsByKey = new Map();
-  for (const b of readLines('HR.txt')) {
+  for await (const b of readLines('HR.txt')) {
     const key = g(b, 11, 16);
     if (!VENUE[key.slice(8, 10)]) continue;
     const payouts = {};
@@ -166,11 +184,11 @@ function parseHR() {
 }
 
 // ---- メイン ----
-function main() {
+async function main() {
   const scoring = loadScoring();
-  const races = parseRA();
-  const seAll = parseSE();
-  const payoutsByKey = parseHR();
+  const races = await parseRA();
+  const seAll = await parseSE();
+  const payoutsByKey = await parseHR();
   console.log(`RA=${races.size}レース SE=${seAll.length}頭走 HR=${payoutsByKey.size}レース分の払戻`);
 
   // 馬・騎手の走歴インデックス（日付昇順）
@@ -186,7 +204,26 @@ function main() {
     byJockey.get(e.jockeyCode).push({date: race.date, rank: e.rank});
   }
   for (const arr of byHorse.values()) arr.sort((a, b) => a.date.localeCompare(b.date));
-  for (const arr of byJockey.values()) arr.sort((a, b) => a.date.localeCompare(b.date));
+  // 騎手は騎乗数が多い（27年で2万超）ので、日付昇順＋複勝の累積和にして
+  // 「レース前の直近300騎乗」を二分探索で O(log n) で引けるようにする
+  const jockeyIdx = new Map();
+  for (const [code, arr] of byJockey) {
+    arr.sort((a, b) => a.date.localeCompare(b.date));
+    const dates = arr.map(r => r.date);
+    const prefix = new Int32Array(arr.length + 1);
+    for (let i = 0; i < arr.length; i++) prefix[i + 1] = prefix[i] + (arr[i].rank <= 3 ? 1 : 0);
+    jockeyIdx.set(code, {dates, prefix});
+  }
+  // date より前の騎乗について {rides, top3}（直近300騎乗まで）を返す
+  function jockeyStatsBefore(code, date) {
+    const ix = jockeyIdx.get(code);
+    if (!ix) return null;
+    let lo = 0, hi = ix.dates.length;
+    while (lo < hi) { const mid = (lo + hi) >> 1; if (ix.dates[mid] < date) lo = mid + 1; else hi = mid; }
+    if (!lo) return null;
+    const from = Math.max(0, lo - 300);
+    return {rides: lo - from, top3: ix.prefix[lo] - ix.prefix[from]};
+  }
 
   // レースごとの出走表
   const lineupByKey = new Map();
@@ -197,7 +234,9 @@ function main() {
 
   const rows = [];
   const raceList = [...races.values()].sort((a, b) => a.date.localeCompare(b.date));
+  let processed = 0;
   for (const race of raceList) {
+    if (++processed % 10000 === 0) console.log(`  スコア再現中 ${processed}/${raceList.length} (${race.date})`);
     if (race.date < MIN_DATE) continue;
     const payouts = payoutsByKey.get(race.key);
     if (!payouts) continue;   // 結果未確定 or 中止
@@ -225,8 +264,7 @@ function main() {
         }
       }
       // 騎手: レース前の直近300騎乗
-      const jr = (byJockey.get(e.jockeyCode) || []).filter(r => r.date < race.date).slice(-300);
-      const jockeyStats = jr.length ? {rides: jr.length, top3: jr.filter(r => r.rank <= 3).length} : null;
+      const jockeyStats = jockeyStatsBefore(e.jockeyCode, race.date);
       return {
         num: e.umaban, name: e.name, jockey: e.jockeyName, kinryo: e.kinryo,
         odds: e.odds, ninki: e.ninki, age3f: past[0]?.agari || null,
@@ -253,6 +291,7 @@ function main() {
     rows.push({
       race_id: race.raceId, date: race.date, venue: race.venue, num: race.raceNum,
       field: horses.length, surface: race.surface, distance: race.distance,
+      baba: race.baba, race_class: race.raceClass,
       axis_odds: axis?.odds ?? null, axis_ninki: axis?.ninki ?? null,
       score_gap: axis && rival ? axis.score - rival.score : null,
       per_bet: perBet,
@@ -266,4 +305,4 @@ function main() {
   console.log('月別:', Object.entries(byMonth).map(([m, c]) => `${m}=${c}`).join(' '));
 }
 
-main();
+main().catch(e => { console.error(e); process.exit(1); });

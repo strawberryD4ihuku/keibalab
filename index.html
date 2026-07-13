@@ -314,6 +314,12 @@
           </div>
         </div>
       </div>
+
+      <!-- 保存した勝ちパターンとの照合（検証ページで⭐保存したものが自動でここに出る） -->
+      <div class="card" id="strategy-hint-card" style="display:none">
+        <div class="card-title">💡 データ分析の狙い目 <span style="color:var(--text3);font-weight:400;margin-left:4px">（検証ページで⭐保存した勝ちパターンにこのレースが合致）</span></div>
+        <div id="strategy-hint"></div>
+      </div>
     </div>
 
     <!-- 収支ページ -->
@@ -358,9 +364,19 @@
         <div style="display:flex;align-items:flex-end;gap:10px;flex-wrap:wrap">
           <button class="btn-save" style="width:auto" id="grid-btn" onclick="runGridSearch()">💰 おいしい買い方をさがす</button>
           <div class="field" style="width:150px"><label>最低レース数（少ないとマグレが混ざります）</label><input type="number" id="grid-minn" value="50" min="5" step="5"></div>
+          <div class="field" style="width:150px"><label>対象期間（昔の傾向が今も続くとは限りません）</label>
+            <select id="grid-period">
+              <option value="all">全期間</option>
+              <option value="10">直近10年</option>
+              <option value="5" selected>直近5年</option>
+              <option value="3">直近3年</option>
+              <option value="1">直近1年</option>
+            </select>
+          </div>
           <div id="strategy-progress" class="progress-wrap"><div class="progress-track"><div class="progress-fill"></div></div><span class="progress-label"></span></div>
         </div>
         <div id="strategy-stats" style="font-size:11px;color:var(--text3);margin-top:6px"></div>
+        <div id="saved-strategies"></div>
         <details style="margin-top:8px">
           <summary style="font-size:12px;color:var(--text2);cursor:pointer">過去の開催分をさかのぼって取り込む（データが取れる期間のみ）</summary>
           <div class="race-grid" style="margin-top:8px">
@@ -412,6 +428,33 @@ const WAKU_COLORS = {
 let horses = [];
 let currentRaceId = null;
 let currentRaceSurface = null;   // 今回のレースの馬場種別（芝/ダ/障）— 産駒補正に使用
+let currentRaceDistance = null;  // 今回のレースの距離（勝ちパターン照合に使用）
+
+// ===== 分析（おいしい買い方さがし）と予想ページで共通のビン分け =====
+// 変えると保存済みの勝ちパターンと判定がズレるので注意
+const ODDS_BAND = v => v == null ? null : v < 2 ? '〜1.9' : v < 3.5 ? '2.0〜3.4' : v < 7 ? '3.5〜6.9' : v < 15 ? '7.0〜14.9' : '15.0〜';
+const FIELD_BAND = n => n == null ? null : n <= 9 ? '〜9頭' : n <= 13 ? '10〜13頭' : '14頭〜';
+const DIST_BAND = d => !d ? null : d <= 1400 ? '短距離' : d <= 1800 ? 'マイル' : d <= 2400 ? '中距離' : '長距離';
+const SEASON = ds => { const m = +String(ds || '').slice(5, 7); return m ? (m <= 2 || m === 12 ? '冬' : m <= 5 ? '春' : m <= 8 ? '夏' : '秋') : null; };
+const CLASS_GROUP = c => !c ? null : ['G1', 'G2', 'G3', 'JG1', 'JG2', 'JG3', '重賞', 'L'].includes(c) ? '重賞・L' : c === 'OP' ? 'OP' : (c === '新馬' || c === '未勝利') ? '新馬・未勝利' : '条件戦';
+const BABA_GROUP = b => !b ? null : b === '良' ? '良' : '道悪';
+
+// レース名からクラスを推定（JV由来の正確なクラスが無い予想ページ用）
+function raceClassFromName(name) {
+  if (!name) return null;
+  const n = name.replace(/Ｇ/g, 'G').replace(/[１-３]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0));
+  const jg = n.match(/J[・･.]?G([123])/i); if (jg) return 'JG' + jg[1];
+  const g = n.match(/G([123])/); if (g) return 'G' + g[1];
+  if (/リステッド|[（(]L[）)]/.test(n)) return 'L';
+  if (/新馬/.test(n)) return '新馬';
+  if (/未勝利/.test(n)) return '未勝利';
+  const k = n.match(/([123])勝/); if (k) return k[1] + '勝';
+  if (/500万/.test(n)) return '1勝';
+  if (/1000万/.test(n)) return '2勝';
+  if (/1600万/.test(n)) return '3勝';
+  if (/オープン|ＯＰ|OP/.test(n)) return 'OP';
+  return null;
+}
 
 // HTMLエスケープ（スクレイピングデータをそのままDOMに入れない）
 function esc(s) {
@@ -736,6 +779,7 @@ async function fetchRaceData() {
     horses = json.horses;
     currentRaceId = json.race_id || null;
     currentRaceSurface = json.race_surface || null;
+    currentRaceDistance = json.race_distance || null;
     renderTable();
     document.getElementById('yoso-result').style.display = 'none';
     document.getElementById('bet-form').style.display = 'none';
@@ -878,7 +922,7 @@ function showPage(page) {
   document.querySelectorAll('.nav-btn')[idx].classList.add('active');
   if (page === 'stats') loadStats();
   if (page === 'bets') loadBets();
-  if (page === 'report') loadStrategyStats();
+  if (page === 'report') { loadStrategyStats(); renderSavedStrategies(); }
 }
 
 // Axis
@@ -1023,6 +1067,7 @@ function renderTable() {
       <td><span class="ai-score ${scoreClass(h.score)}">${h.score}点</span></td>
     </tr>`;
   }).join('');
+  updateStrategyHints();   // 保存済み勝ちパターンとの照合（出走馬・オッズが変わるたびに更新）
 }
 
 function toggleHorse(num) {
@@ -1635,13 +1680,15 @@ function renderReport(agg, detail, outEl) {
 
 // ===== 戦略探索（条件グリッドサーチ） =====
 
-// 蓄積レコードを全件読む（1000件ずつページング）
-async function loadAllVerifyRows() {
+// 蓄積レコードを全件読む（1000件ずつページング。onProgressで進捗通知）
+async function loadAllVerifyRows(onProgress) {
+  const {count} = await sb.from('verify_results').select('*', {count: 'exact', head: true});
   const out = [];
   for (let from = 0; ; from += 1000) {
     const {data, error} = await sb.from('verify_results').select('*').order('date').range(from, from + 999);
     if (error) throw new Error(error.message);
     out.push(...(data || []));
+    if (onProgress && count) onProgress(out.length, count);
     if (!data || data.length < 1000) break;
   }
   return out;
@@ -1770,25 +1817,8 @@ async function runBackfill() {
   }
 }
 
-// ROIのブートストラップ下限（レースを復元抽出してROI分布の5%分位をとる）
-function bootstrapRoiLower(races, iters) {
-  const n = races.length;
-  if (!n) return 0;
-  const rois = [];
-  for (let i = 0; i < iters; i++) {
-    let inv = 0, ret = 0;
-    for (let k = 0; k < n; k++) {
-      const r = races[(Math.random() * n) | 0];
-      inv += r.invest;
-      ret += r.ret;
-    }
-    rois.push(inv ? ret / inv * 100 : 0);
-  }
-  rois.sort((a, b) => a - b);
-  return rois[Math.floor(iters * 0.05)];
-}
-
 // 条件グリッドサーチ本体：条件（1軸＋2軸の全組み合わせ）× 券種 で集計
+// 数万レースでもメモリを食わないよう、レース配列は持たず合計値だけを積む
 function gridSearch(records, minN) {
   // scoreGapのしきい値は分位で自動決定
   const gaps = records.map(r => r.score_gap).filter(v => v != null).map(Number).sort((a, b) => a - b);
@@ -1796,12 +1826,15 @@ function gridSearch(records, minN) {
   const g1 = q(1 / 3), g2 = q(2 / 3);
 
   const AXES = {
-    'オッズ帯': r => r.axis_odds == null ? null :
-      r.axis_odds < 2 ? '〜1.9' : r.axis_odds < 3.5 ? '2.0〜3.4' : r.axis_odds < 7 ? '3.5〜6.9' : r.axis_odds < 15 ? '7.0〜14.9' : '15.0〜',
-    '頭数': r => r.field == null ? null : r.field <= 9 ? '〜9頭' : r.field <= 13 ? '10〜13頭' : '14頭〜',
+    'オッズ帯': r => ODDS_BAND(r.axis_odds == null ? null : Number(r.axis_odds)),
+    '頭数': r => FIELD_BAND(r.field),
     '馬場': r => r.surface || null,
     '自信度': r => r.score_gap == null ? null : r.score_gap <= g1 ? '小' : r.score_gap <= g2 ? '中' : '大',
     '場': r => r.venue || null,
+    '距離帯': r => DIST_BAND(r.distance),
+    'クラス': r => CLASS_GROUP(r.race_class),
+    '馬場状態': r => BABA_GROUP(r.baba),
+    '季節': r => SEASON(r.date),
   };
   const axisNames = Object.keys(AXES);
   // 条件セット: 無条件（全レース）＋1軸＋2軸
@@ -1814,37 +1847,44 @@ function gridSearch(records, minN) {
   for (const rec of records) {
     const vals = {};
     for (const a of axisNames) vals[a] = AXES[a](rec);
+    // 条件セット部分のキーはレースごとに1回だけ作る（券種ループで使い回す）
+    const csKeys = condSets.map(cs => cs.some(a => vals[a] == null) ? null : cs.map(a => `${a}=${vals[a]}`).join('|'));
     const perBet = rec.per_bet || {};
     for (const bt in perBet) {
       const pb = perBet[bt];
       if (!pb || !pb.invest) continue;
-      for (const cs of condSets) {
-        if (cs.some(a => vals[a] == null)) continue;
-        const key = bt + '|' + cs.map(a => `${a}=${vals[a]}`).join('|');
+      for (let ci = 0; ci < condSets.length; ci++) {
+        if (csKeys[ci] == null) continue;
+        const key = bt + '|' + csKeys[ci];
         let s = segs.get(key);
-        if (!s) { s = {bet: bt, conds: cs.map(a => ({axis: a, value: vals[a]})), races: []}; segs.set(key, s); }
-        s.races.push({invest: pb.invest, ret: pb.ret});
+        if (!s) { s = {bet: bt, conds: condSets[ci].map(a => ({axis: a, value: vals[a]})), n: 0, invest: 0, ret: 0, hits: 0, sxx: 0, syy: 0, sxy: 0}; segs.set(key, s); }
+        s.n++; s.invest += pb.invest; s.ret += pb.ret;
+        if (pb.ret > 0) s.hits++;
+        s.sxx += pb.invest * pb.invest; s.syy += pb.ret * pb.ret; s.sxy += pb.invest * pb.ret;
       }
     }
   }
 
   const out = [];
   for (const s of segs.values()) {
-    const n = s.races.length;
-    if (n < minN) continue;
-    const invest = s.races.reduce((x, r) => x + r.invest, 0);
-    const ret = s.races.reduce((x, r) => x + r.ret, 0);
-    const hits = s.races.filter(r => r.ret > 0).length;
+    if (s.n < minN || !s.invest) continue;
+    const R = s.ret / s.invest;
+    // 「堅めに見た回収率」= 回収率（払戻合計÷投資合計）の分散をデルタ法で見積もった5%下限。
+    // 旧実装のブートストラップと同等の値を、レース配列を持たずに出す
+    const varZ = Math.max(0, (s.syy - 2 * R * s.sxy + R * R * s.sxx) / s.n);
+    const xbar = s.invest / s.n;
+    const lower = R - 1.645 * Math.sqrt(varZ / s.n) / xbar;
     out.push({
-      bet: s.bet, conds: s.conds, n, invest, ret,
-      roi: invest ? ret / invest * 100 : 0,
-      hitRate: hits / n * 100,
-      roiLower: bootstrapRoiLower(s.races, 200),
+      bet: s.bet, conds: s.conds, n: s.n, invest: s.invest, ret: s.ret,
+      roi: R * 100,
+      hitRate: s.hits / s.n * 100,
+      roiLower: Math.max(0, lower * 100),
       baseline: s.conds.length === 0,
     });
   }
   out.sort((a, b) => b.roiLower - a.roiLower);
-  return out;
+  out.forEach((s, i) => { s._i = i; });   // ⭐保存ボタンから引くための添字
+  return {results: out, g1, g2};
 }
 
 // 条件を「いつ買うか」の日本語にする
@@ -1857,6 +1897,10 @@ function condText(conds) {
     },
     '頭数': {'〜9頭': '9頭以下の少頭数', '10〜13頭': '10〜13頭立て', '14頭〜': '14頭以上の多頭数'},
     '自信度': {'小': 'AIの1位と2位が接戦', '中': 'AIの1位がやや優勢', '大': 'AIの1位がダントツ'},
+    '距離帯': {'短距離': '1400m以下の短距離', 'マイル': '1401〜1800mのマイル', '中距離': '1801〜2400mの中距離', '長距離': '2401m以上の長距離'},
+    'クラス': {'新馬・未勝利': '新馬・未勝利戦', '条件戦': '1〜3勝クラスの条件戦', 'OP': 'オープン特別', '重賞・L': '重賞・リステッド'},
+    '馬場状態': {'良': '良馬場', '道悪': '道悪（稍重〜不良）'},
+    '季節': {'春': '春（3〜5月）', '夏': '夏（6〜8月）', '秋': '秋（9〜11月）', '冬': '冬（12〜2月）'},
   };
   return conds.map(c => {
     if (c.axis === '場') return `${c.value}のレース`;
@@ -1877,6 +1921,7 @@ const BET_ACTION = {
 };
 
 let gridRunning = false;
+let lastGrid = null;   // 直近のグリッドサーチ結果（⭐保存ボタンが参照する）
 async function runGridSearch() {
   if (gridRunning) return;
   gridRunning = true;
@@ -1886,19 +1931,36 @@ async function runGridSearch() {
   btn.disabled = true;
   btn.style.opacity = '0.5';
   try {
-    setProgressBar(progId, 10, 'ためたデータを読み込み中...');
-    const records = await loadAllVerifyRows();
+    setProgressBar(progId, 5, 'ためたデータを読み込み中...');
+    let records = await loadAllVerifyRows((got, total) =>
+      setProgressBar(progId, 5 + (got / total) * 50, `ためたデータを読み込み中... ${got.toLocaleString()}/${total.toLocaleString()}`));
     if (!records.length) {
       hideProgressBar(progId);
       outEl.innerHTML = '<div class="empty">まだデータがありません。先に上の「今週の結果を集計」を実行してください</div>';
       return;
     }
+    // 対象期間で絞り込み（古い時代の傾向を混ぜたくないとき用）
+    const periodSel = document.getElementById('grid-period');
+    const periodYears = periodSel && periodSel.value !== 'all' ? parseInt(periodSel.value) : null;
+    const periodLabel = periodYears ? `直近${periodYears}年` : '全期間';
+    if (periodYears) {
+      const cut = new Date();
+      cut.setFullYear(cut.getFullYear() - periodYears);
+      const cutStr = fmtDateStr(cut);
+      records = records.filter(r => r.date >= cutStr);
+    }
+    if (!records.length) {
+      hideProgressBar(progId);
+      outEl.innerHTML = '<div class="empty">この期間のデータがありません。期間を広げてみてください</div>';
+      return;
+    }
     const minN = Math.max(5, parseInt(document.getElementById('grid-minn').value) || 50);
     setProgressBar(progId, 60, `${records.length}レース分から「いつ・何を買うと増えるか」を調べています...`);
     await new Promise(r => setTimeout(r, 30));   // 進捗表示を反映させる
-    const segs = gridSearch(records, minN);
+    const {results, g1, g2} = gridSearch(records, minN);
+    lastGrid = {results, g1, g2, periodLabel, from: records[0].date, to: records[records.length - 1].date};
     setProgressBar(progId, 95, '結果をまとめています...');
-    renderGridSearch(segs, records.length, minN, outEl);
+    renderGridSearch(results, records.length, minN, outEl);
     hideProgressBar(progId);
   } catch (e) {
     hideProgressBar(progId);
@@ -1917,7 +1979,7 @@ function renderGridSearch(segs, total, minN, outEl) {
 
   const table = (rows, emptyMsg) => {
     if (!rows.length) return `<div class="empty">${emptyMsg}</div>`;
-    let h = '<div class="table-wrap"><table><thead><tr><th>いつ買うか（条件）</th><th>何を買うか</th><th>レース数</th><th>的中率</th><th>回収率</th><th>堅めに見た<br>回収率</th></tr></thead><tbody>';
+    let h = '<div class="table-wrap"><table><thead><tr><th>いつ買うか（条件）</th><th>何を買うか</th><th>レース数</th><th>的中率</th><th>回収率</th><th>堅めに見た<br>回収率</th><th>予想で<br>使う</th></tr></thead><tbody>';
     for (const s of rows) {
       h += `<tr${s.roi >= 110 ? ' style="background:rgba(62,207,142,0.06)"' : ''}>
         <td style="text-align:left">${s.roiLower >= 110 ? '🏆 ' : ''}${esc(condText(s.conds))}</td>
@@ -1926,6 +1988,7 @@ function renderGridSearch(segs, total, minN, outEl) {
         <td>${s.hitRate.toFixed(0)}%</td>
         <td class="${s.roi >= 110 ? 'green' : s.roi >= 100 ? '' : 'red'}" style="font-weight:700;white-space:nowrap">${s.roi.toFixed(0)}%<div style="font-size:10px;font-weight:400;color:var(--text3)">100円→${Math.round(s.roi)}円</div></td>
         <td class="${s.roiLower >= 110 ? 'green' : ''}">${s.roiLower.toFixed(0)}%</td>
+        <td>${s.baseline ? '–' : `<button class="btn-save" style="width:auto;padding:3px 10px;font-size:11px;white-space:nowrap" onclick="saveStrategy(${s._i})">⭐ 使う</button>`}</td>
       </tr>`;
     }
     return h + '</tbody></table></div>';
@@ -1948,8 +2011,108 @@ function renderGridSearch(segs, total, minN, outEl) {
   html += `<div class="card-title" style="margin-top:1.25rem">くらべる用：条件をつけず全レース買った場合</div>`;
   html += table(baselines, 'データ不足');
   html += '</div></details>';
-  html += `<div class="kaime-note" style="display:block;margin-top:10px">※ ためた${total}レースから「条件×買い方」を総当たりで集計。回収率=賭けた金額に対して戻ってきた金額の割合（100%より上なら増えている）。「堅めに見た回収率」は運が悪かった場合を想定した控えめな見積もりで、これも110%を超えていたら本物の可能性大（🏆）。</div>`;
+  html += `<div class="kaime-note" style="display:block;margin-top:10px">※ ${lastGrid ? esc(lastGrid.periodLabel) + '（' + esc(lastGrid.from) + '〜' + esc(lastGrid.to) + '）の' : 'ためた'}${total}レースから「条件×買い方」を総当たりで集計。回収率=賭けた金額に対して戻ってきた金額の割合（100%より上なら増えている）。「堅めに見た回収率」は運が悪かった場合を想定した控えめな見積もりで、これも110%を超えていたら本物の可能性大（🏆）。気に入った行は「⭐ 使う」で保存すると、予想ページで条件に合うレースのときに自動で教えてくれます。</div>`;
   outEl.innerHTML = html;
+}
+
+// ===== 勝ちパターンの保存と予想ページでの照合 =====
+const STRATEGY_KEY = 'kl:strategies';
+function loadStrategies() {
+  try { return JSON.parse(localStorage.getItem(STRATEGY_KEY)) || []; } catch { return []; }
+}
+function storeStrategies(list) { localStorage.setItem(STRATEGY_KEY, JSON.stringify(list)); }
+function strategyId(s) { return s.bet + '|' + s.conds.map(c => c.axis + '=' + c.value).join('|'); }
+
+// グリッドサーチ結果の1行を「勝ちパターン」として保存する
+function saveStrategy(i) {
+  const s = lastGrid?.results?.[i];
+  if (!s) return;
+  const list = loadStrategies();
+  const id = strategyId(s);
+  if (list.some(x => x.id === id)) { showToast('この買い方は保存済みです'); return; }
+  list.push({
+    id, bet: s.bet, conds: s.conds, n: s.n,
+    roi: Math.round(s.roi), roiLower: Math.round(s.roiLower),
+    g1: lastGrid.g1, g2: lastGrid.g2,   // 自信度のしきい値（保存時点の分布で固定）
+    period: lastGrid.periodLabel, savedAt: fmtDateStr(new Date()),
+  });
+  storeStrategies(list);
+  renderSavedStrategies();
+  showToast('⭐ 保存しました。予想ページで条件に合うレースに自動表示されます');
+}
+
+function deleteStrategy(id) {
+  storeStrategies(loadStrategies().filter(x => x.id !== id));
+  renderSavedStrategies();
+  updateStrategyHints();
+}
+
+// 検証ページの保存済みパターン一覧
+function renderSavedStrategies() {
+  const el = document.getElementById('saved-strategies');
+  if (!el) return;
+  const list = loadStrategies();
+  if (!list.length) { el.innerHTML = ''; return; }
+  el.innerHTML = '<div style="font-size:12px;font-weight:600;color:var(--text2);margin:10px 0 6px">⭐ 保存した勝ちパターン（予想ページで自動チェック）</div><div class="bets-list">'
+    + list.map(s => `<div class="bet-row">
+        <span style="flex:1;color:var(--text2)">${esc(condText(s.conds))} → <strong>${esc(BET_ACTION[s.bet] || s.bet)}</strong></span>
+        <span style="color:var(--text3);white-space:nowrap;font-size:11px">回収率${s.roi}%・${s.n}R・${esc(s.period || '')}</span>
+        <button class="logout-btn" onclick="deleteStrategy('${esc(s.id)}')">削除</button>
+      </div>`).join('') + '</div>';
+}
+
+// 予想ページ：現在のレースが保存済みパターンの条件に合うかを判定して表示
+function updateStrategyHints() {
+  const card = document.getElementById('strategy-hint-card');
+  if (!card) return;
+  const list = loadStrategies();
+  if (!list.length || !horses.length) { card.style.display = 'none'; return; }
+
+  // 検証データと同じ規約（馬柱軸のスコア）で◎と自信度を出す
+  const savedAxis = currentAxis;
+  currentAxis = '馬柱';
+  const hs = horses.map(h => ({...h, score: computeScore(h)}));
+  currentAxis = savedAxis;
+  const ranked = rankForBet(hs, BET_CONFIG['馬連']);
+  const axis = ranked[0], rival = ranked[1];
+  const gap = axis && rival ? axis.score - rival.score : null;
+
+  const feats = {
+    'オッズ帯': ODDS_BAND(axis?.odds ?? null),
+    '頭数': FIELD_BAND(horses.length),
+    '馬場': currentRaceSurface || null,
+    '場': document.getElementById('venue').value || null,
+    '距離帯': DIST_BAND(currentRaceDistance),
+    'クラス': CLASS_GROUP(raceClassFromName(document.getElementById('race-name').value)),
+    '季節': SEASON(document.getElementById('race-date').value),
+    '馬場状態': null,   // 発走前は不明 → 「〜なら」の但し書きで表示
+  };
+
+  const matched = [];
+  for (const s of list) {
+    let ok = true;
+    const unknown = [];
+    for (const c of s.conds) {
+      const v = c.axis === '自信度'
+        ? (gap == null ? null : gap <= s.g1 ? '小' : gap <= s.g2 ? '中' : '大')
+        : feats[c.axis];
+      if (v == null) { unknown.push(c); continue; }   // 判定不能な条件は但し書きへ
+      if (v !== c.value) { ok = false; break; }
+    }
+    if (!ok) continue;
+    const cfg = BET_CONFIG[s.bet];
+    if (!cfg) continue;
+    const picks = rankForBet(hs, cfg).slice(0, cfg.marks.length);
+    matched.push({s, unknown, kaime: kaimeText(s.bet, picks)});
+  }
+
+  if (!matched.length) { card.style.display = 'none'; return; }
+  card.style.display = '';
+  document.getElementById('strategy-hint').innerHTML = matched.map(({s, unknown, kaime}) =>
+    `<div class="yoso-kaime" style="margin-bottom:8px">🏆 このレースは「<strong>${esc(condText(s.conds))}</strong>」に合致
+      ${unknown.length ? `<span class="kaime-note">（※当日の${unknown.map(c => `${esc(c.axis)}が「${esc(condText([c]))}」`).join('・')}なら）</span>` : ''}
+      <br>過去${s.n}レースで回収率${s.roi}%（堅めに見て${s.roiLower}%・${esc(s.period || '')}）
+      <br>💡 ${kaime}</div>`).join('');
 }
 
 function showToast(msg) {

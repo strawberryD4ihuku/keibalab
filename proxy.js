@@ -1,7 +1,7 @@
 const http = require('http');
 const https = require('https');
 
-const PORT = 3001;
+const PORT = parseInt(process.env.PORT || '3001', 10);
 
 const VENUE_CODE = {
   '札幌':'01','函館':'02','福島':'03','新潟':'04',

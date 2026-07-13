@@ -38,6 +38,12 @@ function Sql-Num($v) { if ($null -eq $v) { return 'null' } [string]$v }
 
 $uri = "https://api.supabase.com/v1/projects/hgtepblyevdilkudgues/database/query"
 $headers = @{ Authorization = "Bearer $token"; 'Content-Type' = 'application/json' }
+
+# マイグレーション：分析用の新カラム（馬場状態・クラス）を追加（冪等）
+$migrate = @{ query = "alter table public.verify_results add column if not exists baba text, add column if not exists race_class text;" } | ConvertTo-Json -Depth 3
+$null = Invoke-WebRequest -Method Post -Uri $uri -Headers $headers -Body ([System.Text.Encoding]::UTF8.GetBytes($migrate)) -UseBasicParsing -TimeoutSec 120
+Write-Output "マイグレーション完了（baba, race_class）"
+
 $done = 0
 for ($i = 0; $i -lt $rows.Count; $i += $BatchSize) {
   $batch = $rows[$i..([Math]::Min($i + $BatchSize - 1, $rows.Count - 1))]
@@ -45,17 +51,19 @@ for ($i = 0; $i -lt $rows.Count; $i += $BatchSize) {
     $perBet = ($_.per_bet | ConvertTo-Json -Compress -Depth 5) -replace "'", "''"
     "(" + (Sql-Str $_.race_id) + "," + (Sql-Str $_.date) + "," + (Sql-Str $_.venue) + "," + (Sql-Num $_.num) + "," +
       (Sql-Num $_.field) + "," + (Sql-Str $_.surface) + "," + (Sql-Num $_.distance) + "," +
+      (Sql-Str $_.baba) + "," + (Sql-Str $_.race_class) + "," +
       (Sql-Num $_.axis_odds) + "," + (Sql-Num $_.axis_ninki) + "," + (Sql-Num $_.score_gap) + ",'" + $perBet + "'::jsonb)"
   }) -join ",`n"
   $sql = @"
-insert into public.verify_results (race_id, date, venue, num, field, surface, distance, axis_odds, axis_ninki, score_gap, per_bet)
+insert into public.verify_results (race_id, date, venue, num, field, surface, distance, baba, race_class, axis_odds, axis_ninki, score_gap, per_bet)
 values
 $values
 on conflict (race_id) do update set
   field = excluded.field, surface = excluded.surface, distance = excluded.distance,
+  baba = excluded.baba, race_class = excluded.race_class,
   axis_odds = excluded.axis_odds, axis_ninki = excluded.axis_ninki, score_gap = excluded.score_gap,
   per_bet = excluded.per_bet
-where verify_results.axis_odds is null;
+where verify_results.axis_odds is null or verify_results.baba is null;
 "@
   $body = @{ query = $sql } | ConvertTo-Json -Depth 3
   $null = Invoke-WebRequest -Method Post -Uri $uri -Headers $headers -Body ([System.Text.Encoding]::UTF8.GetBytes($body)) -UseBasicParsing -TimeoutSec 120
