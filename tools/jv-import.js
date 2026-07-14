@@ -12,6 +12,7 @@ const path = require('path');
 const readline = require('readline');
 const iconv = require('iconv-lite');
 const PF = require('../lib/performance-features.js');
+const CF = require('../lib/condition-features.js');
 
 // ---- 引数 ----
 const args = process.argv.slice(2);
@@ -148,6 +149,7 @@ async function parseSE() {
     if (!umaban) continue;
     entries.set(key + '#' + umaban, {
       key,
+      waku: num(b, 27, 1) || null,
       umaban,
       horseId: g(b, 30, 10),
       name: gz(b, 40, 36).replace(/[\s　]+$/g, ''),
@@ -275,9 +277,10 @@ async function main() {
     const race = races.get(e.key);
     if (!race || !e.rank) continue;   // 取消等は履歴に入れない
     const run = {
-      date: race.date, rank: e.rank, agari: e.agari,
+      date: race.date, rank: e.rank, field: race.field, agari: e.agari,
       surface: race.surface, distance: race.distance, venueCode: race.venueCode,
-      raceClass: race.raceClass, timeSec: e.timeSec, timeDiffSec: e.timeDiffSec,
+      raceClass: race.raceClass, classLevel: PF.raceClassLevel(race.raceClass),
+      waku: e.waku, timeSec: e.timeSec, timeDiffSec: e.timeDiffSec,
       speedFigure: e.speedFigure ?? null,
       corner1: e.corner1, corner2: e.corner2, corner3: e.corner3, corner4: e.corner4,
     };
@@ -331,8 +334,14 @@ async function main() {
     const horses = lineup.map(e => {
       // レース当日より前の走歴のみ使用（リーク防止・フロントと同じ規約）
       const runs = (byHorse.get(e.horseId) || []).filter(r => r.date < race.date);
-      const past = runs.slice(-5).reverse();
+      const recent = runs.slice(-20).reverse();
+      const past = recent.slice(0, 5);
       const performance = PF.summarizePerformance(past);
+      const conditions = CF.summarizeConditions(recent, {
+        date: race.date, surface: race.surface, distance: race.distance,
+        venueCode: race.venueCode, classLevel: PF.raceClassLevel(race.raceClass),
+        field: lineup.length, waku: e.waku, maxWaku: Math.max(...lineup.map(x => x.waku || 0)),
+      });
       const career = {n: 0, w: 0, p3: 0, fitN: 0, fitW: 0, fitP3: 0, venueN: 0, venueP3: 0};
       for (const r of runs) {
         career.n++;
@@ -361,6 +370,7 @@ async function main() {
         marginForm: performance.marginForm,
         classLevel: performance.classLevel,
         speedForm: performance.speedForm,
+        ...conditions,
       };
     });
     horses.forEach(h => { h.score = scoring.computeScore(h); });
@@ -398,6 +408,17 @@ async function main() {
             marginForm: r4(horses[i].marginForm, 5),
             classLevel: r4(horses[i].classLevel, 5),
             speedForm: r4(horses[i].speedForm, 5),
+            distanceDelta: r4(horses[i].distanceDelta, 5),
+            distanceChangeFit: r4(horses[i].distanceChangeFit, 5),
+            surfaceSwitch: horses[i].surfaceSwitch,
+            targetSurfaceFit: r4(horses[i].targetSurfaceFit, 5),
+            classChange: r4(horses[i].classChange, 5),
+            layoffLog: r4(horses[i].layoffLog, 5),
+            secondUp: horses[i].secondUp,
+            gatePosition: r4(horses[i].gatePosition, 5),
+            runningStyle: r4(horses[i].runningStyle, 5),
+            gateStyleInteraction: r4(horses[i].gateStyleInteraction, 5),
+            courseStyleFit: r4(horses[i].courseStyleFit, 5),
           };
         }),
         pick: wv.pick ? wv.pick.num : null,

@@ -1,4 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import WIN_MODEL from "./win-model.json" assert { type: "json" };
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -17,6 +18,11 @@ interface CareerStats {
   fitN: number; fitW: number; fitP3: number;
   venueN: number; venueP3: number;
   marginForm: number | null; classLevel: number | null;
+  distanceDelta: number | null; distanceChangeFit: number | null;
+  surfaceSwitch: number | null; targetSurfaceFit: number | null; classChange: number | null;
+  layoffLog: number | null; secondUp: number | null;
+  gatePosition: number | null; runningStyle: number | null;
+  gateStyleInteraction: number | null; courseStyleFit: number | null;
 }
 
 interface Horse {
@@ -65,6 +71,53 @@ function summarizePerformance(runs: Array<{timeDiffSec: number | null; distance:
   };
 }
 
+type ConditionRun = {date: string; rank: number; field: number | null; surface: string | null; distance: number | null;
+  venueCode: string | null; classLevel: number | null; corner1: number | null};
+const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
+function runningStyle(runs: ConditionRun[]) {
+  let sum = 0, weight = 0;
+  runs.slice(0, 5).forEach((r, i) => {
+    if (!(Number(r.corner1) > 0) || !(Number(r.field) > 1)) return;
+    const w = 5 - i;
+    sum += clamp(1 - (Number(r.corner1) - 1) / (Number(r.field) - 1), 0, 1) * w; weight += w;
+  });
+  return weight ? sum / weight : null;
+}
+function summarizeConditions(runs: ConditionRun[], current: {date: string; surface: string | null; distance: number | null;
+  venueCode: string; classLevel: number | null; field: number; waku: number; maxWaku: number}) {
+  const recent = runs.slice(0, 20), last = recent[0], prev = recent[1];
+  const days = (a: string, b: string) => Math.max(0, Math.round((Date.parse(b) - Date.parse(a)) / 86400000));
+  const sameDistance = (r: ConditionRun) => Number(r.distance) > 0 && Number(current.distance) > 0 && Math.abs(Number(r.distance) - Number(current.distance)) <= 200;
+  const smoothed = (predicate: (r: ConditionRun) => boolean) => {
+    let sum = 2, n = 4;
+    for (const r of recent) if (predicate(r) && r.rank > 0 && Number(r.field) > 1) {
+      sum += clamp(1 - (r.rank - 1) / (Number(r.field) - 1), 0, 1); n++;
+    }
+    return n > 4 ? sum / n : null;
+  };
+  const style = runningStyle(recent);
+  const gate = current.waku ? clamp((current.waku - 1) / ((current.maxWaku || Math.min(8, current.field)) - 1 || 1), 0, 1) : null;
+  const gap = last ? days(last.date, current.date) : null;
+  const prevGap = last && prev ? days(prev.date, last.date) : null;
+  const band = style == null ? null : style >= 2 / 3 ? 2 : style >= 1 / 3 ? 1 : 0;
+  return {
+    distanceDelta: last?.distance && current.distance ? clamp((current.distance - last.distance) / 400, -3, 3) : null,
+    distanceChangeFit: current.distance ? smoothed((r) => r.surface === current.surface && sameDistance(r)) : null,
+    surfaceSwitch: last?.surface && current.surface ? (last.surface === current.surface ? 0 : 1) : null,
+    targetSurfaceFit: current.surface ? smoothed((r) => r.surface === current.surface) : null,
+    classChange: last?.classLevel != null && current.classLevel != null ? clamp(current.classLevel - last.classLevel, -4, 4) : null,
+    layoffLog: gap == null ? null : clamp(Math.log1p(gap) / Math.log(366), 0, 1.5),
+    secondUp: prevGap == null || gap == null ? null : (prevGap >= 60 && gap >= 7 && gap <= 45 ? 1 : 0),
+    gatePosition: gate, runningStyle: style,
+    gateStyleInteraction: gate == null || style == null ? null : (gate - .5) * (style - .5) * 4,
+    courseStyleFit: band == null ? null : smoothed((r) => {
+      if (r.venueCode !== current.venueCode || r.surface !== current.surface || !sameDistance(r)) return false;
+      const s = runningStyle([r]); const b = s == null ? null : s >= 2 / 3 ? 2 : s >= 1 / 3 ? 1 : 0;
+      return b === band;
+    }),
+  };
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
 
@@ -75,7 +128,7 @@ serve(async (req) => {
     const date = url.searchParams.get("date") || "";       // YYYY-MM-DD
     const raceNum = parseInt(url.searchParams.get("race_num") || "1");
 
-    if (action !== "kaisai" && action !== "odds" && action !== "result" && action !== "sire" && action !== "jockey" && !date) {
+    if (action !== "kaisai" && action !== "odds" && action !== "result" && action !== "sire" && action !== "jockey" && action !== "win-model" && !date) {
       return new Response(JSON.stringify({ error: "date は必須です (YYYY-MM-DD)" }), {
         status: 400, headers: { ...CORS, "Content-Type": "application/json" },
       });
@@ -91,6 +144,7 @@ serve(async (req) => {
       : action === "result" ? await fetchRaceResult(url.searchParams.get("race_id") || "")
       : action === "sire" ? await fetchSireStats(url.searchParams.get("horse_id") || "")
       : action === "jockey" ? await fetchJockeyStats(url.searchParams.get("id") || "")
+      : action === "win-model" ? {model: WIN_MODEL}
       : await fetchRaceData(venue, date, raceNum);
 
     return new Response(JSON.stringify(result), {
@@ -217,7 +271,14 @@ async function fetchRaceData(venue: string, date: string, raceNum: number) {
   // 各馬の全戦績ページから直近10年の成績を集計
   // （過去レースの検証時にリークしないよう、レース当日以降の走は除外）
   const untilTs = new Date(date + "T00:00:00+09:00").getTime() || Date.now();
-  await mergeCareers(horses, venue, surface, distance, untilTs);
+  const currentRaceClassName = [
+    shutubaHtml.match(/<title>([^|<]+)/)?.[1] || "",
+    ...[...shutubaHtml.matchAll(/class="RaceData0[12]"[^>]*>([\s\S]*?)<\/div>/g)].map((m) => m[1]),
+  ].join(" ").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+  await mergeCareers(horses, venue, surface, distance, untilTs, {
+    date, venueCode: venue, classLevel: raceClassLevel(currentRaceClassName), field: horses.length,
+    maxWaku: Math.max(...horses.map((h) => h.waku || 0)),
+  });
 
   const raceName = (shutubaHtml.match(/<title>([^|<]+?)\s*出馬表/)?.[1] || "").trim();
   return {
@@ -228,19 +289,21 @@ async function fetchRaceData(venue: string, date: string, raceNum: number) {
 }
 
 // 各馬の戦績ページ（db.netkeiba.com/horse/result/{id}/）を並列取得して集計
-async function mergeCareers(horses: Horse[], venue: string, surface: string | null, distance: number | null, untilTs: number) {
+async function mergeCareers(horses: Horse[], venue: string, surface: string | null, distance: number | null, untilTs: number,
+  raceContext: {date: string; venueCode: string; classLevel: number | null; field: number; maxWaku: number}) {
   const targets = horses.filter((h) => h.horseId);
   await mapLimit(targets, 5, async (h) => {
     try {
       const html = await fetchHtml(`https://db.netkeiba.com/horse/result/${h.horseId}/`);
-      h.career = parseCareer(html, venue, surface, distance, untilTs);
+      h.career = parseCareer(html, venue, surface, distance, untilTs, {...raceContext, waku: h.waku});
     } catch { h.career = null; }
   });
 }
 
 // 戦績テーブルから「レース当日より前×直近10年」分を集計：
 // 通算（n/w/p3）・同条件=同じ馬場種別かつ距離±200m（fit*）・同競馬場（venue*）
-function parseCareer(html: string, venue: string, surface: string | null, distance: number | null, untilTs: number): CareerStats {
+function parseCareer(html: string, venue: string, surface: string | null, distance: number | null, untilTs: number,
+  raceContext: {date: string; venueCode: string; classLevel: number | null; field: number; maxWaku: number; waku: number}): CareerStats {
   const tbl = html.match(/class="db_h_race_results[\s\S]*?<\/table>/)?.[0] || "";
   const rows = [...tbl.matchAll(/<tr[^>]*>[\s\S]*?<\/tr>/g)].slice(1);
   const cutoff = (untilTs || Date.now()) - 10 * 365.25 * 86400 * 1000;
@@ -249,8 +312,11 @@ function parseCareer(html: string, venue: string, surface: string | null, distan
   const col = (name: string, fallback: number) => { const i = headers.findIndex((h) => h === name || h.includes(name)); return i >= 0 ? i : fallback; };
   const dateCol = col("日付", 0), venueCol = col("開催", 1), raceNameCol = col("レース名", 4);
   const rankCol = col("着順", 11), distanceCol = col("距離", 14), marginCol = col("着差", 18);
-  const s: CareerStats = {n: 0, w: 0, p3: 0, fitN: 0, fitW: 0, fitP3: 0, venueN: 0, venueP3: 0, marginForm: null, classLevel: null};
-  const performanceRuns: Array<{timeDiffSec: number | null; distance: number | null; raceClass: string | null}> = [];
+  const s: CareerStats = {n: 0, w: 0, p3: 0, fitN: 0, fitW: 0, fitP3: 0, venueN: 0, venueP3: 0,
+    marginForm: null, classLevel: null, distanceDelta: null, distanceChangeFit: null,
+    surfaceSwitch: null, targetSurfaceFit: null, classChange: null, layoffLog: null, secondUp: null,
+    gatePosition: null, runningStyle: null, gateStyleInteraction: null, courseStyleFit: null};
+  const performanceRuns: Array<ConditionRun & {timeDiffSec: number | null; raceClass: string | null}> = [];
   for (const m of rows) {
     const cells = [...m[0].matchAll(/<td[^>]*>([\s\S]*?)<\/td>/g)]
       .map((c) => clean(c[1]));
@@ -275,12 +341,17 @@ function parseCareer(html: string, venue: string, surface: string | null, distan
     }
     const marginText = cells[marginCol] || "";
     performanceRuns.push({
+      date: cells[dateCol].replace(/\//g, "-"), rank, field: parseInt(cells[6], 10) || null,
+      surface: dm ? dm[1] : null, venueCode: venue && cells[venueCol].includes(venue) ? venue : (cells[venueCol] || null),
+      classLevel: raceClassLevel(cells[raceNameCol] || null),
+      corner1: parseInt((cells[17] || "").match(/\d+/)?.[0] || "") || null,
       timeDiffSec: /^[-+]?\d+(?:\.\d+)?$/.test(marginText) ? Number(marginText) : null,
       distance: dm ? parseInt(dm[2], 10) : null,
       raceClass: cells[raceNameCol] || null,
     });
   }
   Object.assign(s, summarizePerformance(performanceRuns));
+  Object.assign(s, summarizeConditions(performanceRuns, {...raceContext, surface, distance}));
   return s;
 }
 

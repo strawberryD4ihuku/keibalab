@@ -12,6 +12,7 @@ const VENUE_CODE = {
 const fs = require('fs');
 const path = require('path');
 const PF = require('./lib/performance-features.js');
+const CF = require('./lib/condition-features.js');
 
 const server = http.createServer(async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -198,7 +199,14 @@ async function fetchRaceData(venue, date, raceNum) {
   // 各馬の全戦績ページから直近10年の成績を集計
   // （過去レースの検証時にリークしないよう、レース当日以降の走は除外）
   const untilTs = new Date(date + 'T00:00:00+09:00').getTime() || Date.now();
-  await mergeCareers(horses, venue, surface, distance, untilTs);
+  const currentRaceClassName = [
+    shutubaHtml.match(/<title>([^|<]+)/)?.[1] || '',
+    ...[...shutubaHtml.matchAll(/class="RaceData0[12]"[^>]*>([\s\S]*?)<\/div>/g)].map(m => m[1]),
+  ].join(' ').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+  await mergeCareers(horses, venue, surface, distance, untilTs, {
+    date, venueCode: venue, classLevel: PF.raceClassLevel(currentRaceClassName), field: horses.length,
+    maxWaku: Math.max(...horses.map(h => h.waku || 0)),
+  });
 
   const raceName = (shutubaHtml.match(/<title>([^|<]+?)\s*出馬表/)?.[1] || '').trim();
   return {
@@ -209,19 +217,19 @@ async function fetchRaceData(venue, date, raceNum) {
 }
 
 // 各馬の戦績ページ（db.netkeiba.com/horse/result/{id}/）を並列取得して集計
-async function mergeCareers(horses, venue, surface, distance, untilTs) {
+async function mergeCareers(horses, venue, surface, distance, untilTs, raceContext) {
   const targets = horses.filter(h => h.horseId);
   await mapLimit(targets, 5, async (h) => {
     try {
       const html = await fetchHtml(`https://db.netkeiba.com/horse/result/${h.horseId}/`);
-      h.career = parseCareer(html, venue, surface, distance, untilTs);
+      h.career = parseCareer(html, venue, surface, distance, untilTs, {...raceContext, waku: h.waku});
     } catch { h.career = null; }
   });
 }
 
 // 戦績テーブルから「レース当日より前×直近10年」分を集計：
 // 通算（n/w/p3）・同条件=同じ馬場種別かつ距離±200m（fit*）・同競馬場（venue*）
-function parseCareer(html, venue, surface, distance, untilTs) {
+function parseCareer(html, venue, surface, distance, untilTs, raceContext) {
   const tbl = html.match(/class="db_h_race_results[\s\S]*?<\/table>/)?.[0] || '';
   const rows = [...tbl.matchAll(/<tr[^>]*>[\s\S]*?<\/tr>/g)].slice(1);
   const clean = s => String(s || '').replace(/<[^>]*>/g, '').replace(/&nbsp;|&#160;/g, ' ').trim();
@@ -260,12 +268,23 @@ function parseCareer(html, venue, surface, distance, untilTs) {
     const marginText = cells[marginCol] || '';
     const timeDiffSec = /^[-+]?\d+(?:\.\d+)?$/.test(marginText) ? Number(marginText) : null;
     performanceRuns.push({
+      date: cells[dateCol].replace(/\//g, '-'),
+      rank,
+      field: parseInt(cells[6], 10) || null,
+      surface: dm ? dm[1] : null,
+      venueCode: venue && cells[venueCol].includes(venue) ? venue : (cells[venueCol] || null),
+      classLevel: PF.raceClassLevel(cells[raceNameCol] || null),
+      waku: parseInt(cells[7], 10) || null,
+      corner1: parseInt((cells[17] || '').match(/\d+/)?.[0], 10) || null,
       timeDiffSec,
       distance: dm ? parseInt(dm[2], 10) : null,
       raceClass: cells[raceNameCol] || null,
     });
   }
   Object.assign(s, PF.summarizePerformance(performanceRuns));
+  Object.assign(s, CF.summarizeConditions(performanceRuns, {
+    ...(raceContext || {}), surface, distance,
+  }));
   return s;
 }
 

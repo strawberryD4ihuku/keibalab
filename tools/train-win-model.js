@@ -269,6 +269,11 @@ function main() {
     : outFile;
   fs.mkdirSync(path.dirname(saveFile), {recursive: true});
   fs.writeFileSync(saveFile, JSON.stringify(out, null, 2));
+  if (isProduction) {
+    const deployedModel = out.adopted ? out : JSON.parse(fs.readFileSync(outFile, 'utf8'));
+    const edgeModel = path.join(__dirname, '..', 'supabase', 'functions', 'race-data', 'win-model.json');
+    fs.writeFileSync(edgeModel, JSON.stringify(deployedModel, null, 2));
+  }
   console.log(`\n保存: ${saveFile}（adopted=${out.adopted}）`);
   if (isProduction && !out.adopted) console.log(`現行採用モデル ${outFile} は上書きしません`);
   feats.forEach(f => console.log(`  β ${f.padEnd(8)} = ${String(out.coef[f]).padStart(10)}   γ missing_${f.padEnd(8)} = ${out.missingCoef[f]}`));

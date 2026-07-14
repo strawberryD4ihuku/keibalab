@@ -1129,6 +1129,11 @@ function evaluateWinRace(horses, options) {
 // 学習は tools/train-win-model.js（2015〜2021年のみ）。Node側は lib/win-model.js が抽出して共有。
 const WIN_MODEL_FEATURES = ['form', 'career', 'fit', 'venueFit', 'agari', 'jockey', 'kinryo'];
 const WIN_MODEL_FEATURE_LABELS = {
+  distanceDelta: '前走からの距離変化', distanceChangeFit: '今回距離適性',
+  surfaceSwitch: '芝ダート替わり', targetSurfaceFit: '今回馬場適性',
+  classChange: '昇級・降級', layoffLog: '休養日数', secondUp: '叩き2走目',
+  gatePosition: '枠位置', runningStyle: '推定脚質',
+  gateStyleInteraction: '枠×脚質', courseStyleFit: 'コース×脚質適性',
   form: '近走内容', career: '通算実績', fit: 'コース・距離適性', venueFit: '同競馬場実績',
   agari: '上がり評価', jockey: '騎手成績', kinryo: '斤量',
   marginForm: '着差パフォーマンス', classLevel: '対戦クラス',
@@ -1404,6 +1409,17 @@ async function generateWinValueYoso() {
     num: h.num, name: h.name, odds: h.odds,
     marginForm: h.career?.marginForm ?? h.marginForm ?? null,
     classLevel: h.career?.classLevel ?? h.classLevel ?? null,
+    distanceDelta: h.career?.distanceDelta ?? h.distanceDelta ?? null,
+    distanceChangeFit: h.career?.distanceChangeFit ?? h.distanceChangeFit ?? null,
+    surfaceSwitch: h.career?.surfaceSwitch ?? h.surfaceSwitch ?? null,
+    targetSurfaceFit: h.career?.targetSurfaceFit ?? h.targetSurfaceFit ?? null,
+    classChange: h.career?.classChange ?? h.classChange ?? null,
+    layoffLog: h.career?.layoffLog ?? h.layoffLog ?? null,
+    secondUp: h.career?.secondUp ?? h.secondUp ?? null,
+    gatePosition: h.career?.gatePosition ?? h.gatePosition ?? null,
+    runningStyle: h.career?.runningStyle ?? h.runningStyle ?? null,
+    gateStyleInteraction: h.career?.gateStyleInteraction ?? h.gateStyleInteraction ?? null,
+    courseStyleFit: h.career?.courseStyleFit ?? h.courseStyleFit ?? null,
   }, computeScoreComponents(h)));
   const seq = ++winValueSeq;
   await loadWinModel();
