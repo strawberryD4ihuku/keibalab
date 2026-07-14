@@ -21,6 +21,11 @@ const argOf = (name, def) => {
 const DIR = argOf('--dir', 'jvdata');
 const MIN_DATE = argOf('--min-date', '0000-00-00');
 const OUT = argOf('--out', path.join(DIR, 'verify_rows.json'));
+// 単勝・期待値判定用の全馬行（レース単位でグループ化）。'none'指定で出力を省略
+const WIN_OUT = argOf('--win-out', path.join(DIR, 'win_value_rows.json'));
+
+// 期待値計算はフロント（index.html）から抽出した同一実装を使う
+const WV = require('../lib/win-value.js');
 
 const VENUE = {'01': '札幌', '02': '函館', '03': '福島', '04': '新潟', '05': '東京', '06': '中山', '07': '中京', '08': '京都', '09': '阪神', '10': '小倉'};
 
@@ -55,7 +60,7 @@ function loadScoring() {
   const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
   const src = html.match(/<script>([\s\S]*?)<\/script>/)[1];
   const names = ['hashStr', 'JOCKEY_RATING', 'jockeyRating', 'jockeyRateComp', 'AXIS_WEIGHTS',
-    'sireFitComp', 'computeScore', 'BET_CONFIG', 'rankForBet', 'buildCombos', 'ORDERED_BETS', 'comboPayout'];
+    'sireFitComp', 'computeScoreComponents', 'computeScore', 'BET_CONFIG', 'rankForBet', 'buildCombos', 'ORDERED_BETS', 'comboPayout'];
   const decls = names.map(n => extractDecl(src, n)).join('\n');
   const factory = new Function(`
     let currentAxis = '馬柱';
@@ -63,7 +68,7 @@ function loadScoring() {
     ${decls}
     return {
       setSurface: s => { currentRaceSurface = s; },
-      computeScore, rankForBet, buildCombos, comboPayout, BET_CONFIG,
+      computeScoreComponents, computeScore, rankForBet, buildCombos, comboPayout, BET_CONFIG,
     };
   `);
   return factory();
@@ -233,6 +238,7 @@ async function main() {
   }
 
   const rows = [];
+  const winRows = [];
   const raceList = [...races.values()].sort((a, b) => a.date.localeCompare(b.date));
   let processed = 0;
   for (const race of raceList) {
@@ -277,6 +283,41 @@ async function main() {
     });
     horses.forEach(h => { h.score = scoring.computeScore(h); });
 
+    // 単勝・期待値判定用の全馬行（スコアは同点回避ハッシュを除外した値。確定オッズ使用）
+    if (WIN_OUT !== 'none') {
+      const probInput = horses.map(h => ({num: h.num, odds: h.odds, score: scoring.computeScore(h, {noJitter: true})}));
+      const wv = WV.evaluateWinRace(probInput);
+      const r4 = (v, d) => v == null ? null : Number(v.toFixed(d));
+      winRows.push({
+        race_id: race.raceId, date: race.date,
+        // レース属性（総合モデルの分析・将来の条件別検証用）
+        venue: race.venue, surface: race.surface, distance: race.distance,
+        baba: race.baba, race_class: race.raceClass, field: horses.length,
+        horses: wv.horses.map((h, i) => {
+          // スコア構成要素（0-100・null=欠損）。レース当日より前の情報のみから算出済み。
+          // sireFitはJV-Dataに血統がないため常にnull（保存はするが学習特徴量には使わない）
+          const comps = scoring.computeScoreComponents(horses[i]);
+          return {
+            num: h.num,
+            odds: h.odds ?? null,           // 確定オッズ（発売中オッズではない）
+            marketProb: r4(h.marketProb, 5),
+            score: h.score,
+            predictedWinProb: r4(h.predictedWinProb, 5),
+            fairOdds: r4(h.fairOdds, 2),
+            expectedRoiPercent: r4(h.expectedRoiPercent, 1),
+            rank: lineup[i].rank || null,   // 1=勝ち。null=取消等
+            won: lineup[i].rank === 1,
+            buy: h.decision === 'buy',
+            // 特徴量（nullがそのまま欠損フラグの情報源になる）
+            form: comps.form, career: comps.career, fit: comps.fit,
+            venueFit: comps.venueFit, agari: comps.agari,
+            jockey: comps.jockey, kinryo: comps.kinryo, sireFit: comps.sireFit,
+          };
+        }),
+        pick: wv.pick ? wv.pick.num : null,
+      });
+    }
+
     const perBet = {};
     for (const bt in scoring.BET_CONFIG) {
       const cfg = scoring.BET_CONFIG[bt];
@@ -299,6 +340,10 @@ async function main() {
   }
 
   fs.writeFileSync(OUT, JSON.stringify(rows));
+  if (WIN_OUT !== 'none') {
+    fs.writeFileSync(WIN_OUT, JSON.stringify(winRows));
+    console.log(`単勝・期待値行: ${winRows.length}レース -> ${WIN_OUT}`);
+  }
   const byMonth = {};
   for (const r of rows) byMonth[r.date.slice(0, 7)] = (byMonth[r.date.slice(0, 7)] || 0) + 1;
   console.log(`出力: ${rows.length}行 -> ${OUT}`);

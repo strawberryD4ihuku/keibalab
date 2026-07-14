@@ -4,7 +4,10 @@
   "description": "",
   "main": "proxy.js",
   "scripts": {
-    "start": "node proxy.js"
+    "start": "node proxy.js",
+    "test": "node tools/win-value.test.js && node tools/win-model.test.js",
+    "train:win": "node tools/train-win-model.js",
+    "backtest:win": "node tools/win-value-backtest.js"
   },
   "keywords": [],
   "author": "",

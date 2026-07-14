@@ -61,6 +61,8 @@ const server = http.createServer(async (req, res) => {
       const jkId = url.searchParams.get('id') || '';
       if (!/^\w{3,10}$/.test(jkId)) throw Object.assign(new Error('id は必須です'), {status: 400});
       result = await fetchJockeyStats(jkId);
+    } else if (action === 'win-model') {
+      result = readWinModel();
     } else {
       if (!date) throw Object.assign(new Error('date は必須です'), {status: 400});
       result = await fetchRaceData(venue, date, raceNum);
@@ -72,6 +74,14 @@ const server = http.createServer(async (req, res) => {
     res.end(JSON.stringify({ error: e.message }));
   }
 });
+
+// 学習済みの総合勝率モデル（tools/train-win-model.js が生成）を返す。
+// パスは固定＝クエリでファイル名を受け取らない（任意ファイル配信・パストラバーサル防止）。
+// ファイルなし・壊れたJSONは {model: null} → フロントは市場確率へフォールバックする
+function readWinModel() {
+  const p = path.join(__dirname, 'models', 'win-model.json');
+  try { return {model: JSON.parse(fs.readFileSync(p, 'utf8'))}; } catch { return {model: null}; }
+}
 
 // 開催日一覧（netkeibaカレンダーから）
 // year/month指定ならその月のみ（バックフィル用）、未指定なら今月＋来月

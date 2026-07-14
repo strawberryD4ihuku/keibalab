@@ -264,13 +264,8 @@
       </div>
 
       <div class="card">
-        <div class="card-title">🎯 予想の軸</div>
-        <div class="axis-pills">
-          <div class="pill active" onclick="setAxis(this,'馬柱')">🗒 馬柱</div>
-          <div class="pill" onclick="setAxis(this,'血統')">🧬 血統</div>
-          <div class="pill" onclick="setAxis(this,'騎手')">👤 騎手</div>
-        </div>
-        <div class="axis-desc" id="axis-desc">馬柱軸：今回と同じコース（馬場・距離＋その競馬場）での実績を最重視。直近5走・通算複勝率・上がり3F・斤量も加味</div>
+        <div class="card-title">🎯 総合予想</div>
+        <div class="axis-desc" id="axis-desc">近走内容・コース適性・距離適性・騎手・血統・斤量・市場評価を総合して評価します</div>
       </div>
 
       <div class="card">
@@ -292,7 +287,7 @@
           <button class="btn-yoso" onclick="generateYoso()">✨ 予想を出す</button>
         </div>
         <div id="yoso-result" style="display:none" class="yoso-result">
-          <div class="yoso-mark">◎ 本命</div>
+          <div class="yoso-mark" id="honmei-label">◎ 本命</div>
           <div class="yoso-horses" id="honmei-area"></div>
           <div class="yoso-mark" id="taikou-label">○ 対抗 / ▲ 単穴 / △ 連下</div>
           <div class="yoso-horses" id="taikou-area"></div>
@@ -429,6 +424,7 @@ let horses = [];
 let currentRaceId = null;
 let currentRaceSurface = null;   // 今回のレースの馬場種別（芝/ダ/障）— 産駒補正に使用
 let currentRaceDistance = null;  // 今回のレースの距離（勝ちパターン照合に使用）
+let currentOddsTime = null;      // 出馬表取得時のオッズ時刻（単勝・期待値判定の表示に使用）
 
 // ===== 分析（おいしい買い方さがし）と予想ページで共通のビン分け =====
 // 変えると保存済みの勝ちパターンと判定がズレるので注意
@@ -780,6 +776,7 @@ async function fetchRaceData() {
     currentRaceId = json.race_id || null;
     currentRaceSurface = json.race_surface || null;
     currentRaceDistance = json.race_distance || null;
+    currentOddsTime = json.odds_time || null;
     renderTable();
     document.getElementById('yoso-result').style.display = 'none';
     document.getElementById('bet-form').style.display = 'none';
@@ -926,18 +923,8 @@ function showPage(page) {
 }
 
 // Axis
-const axisDescs = {
-  '馬柱': '馬柱軸：今回と同じコース（馬場・距離＋その競馬場）での実績を最重視。直近5走・通算複勝率・上がり3F・斤量も加味',
-  '血統': '血統軸：種牡馬の産駒成績（今回の馬場で勝てるか）と、今回と同じ馬場・距離での適性を重視（産駒表示つき）',
-  '騎手': '騎手軸：騎手の長期リーディング実績を最優先に、近走・通算・同コース実績も加味',
-};
-function setAxis(el, name) {
-  document.querySelectorAll('.pill').forEach(p => p.classList.remove('active'));
-  el.classList.add('active');
-  currentAxis = name;
-  document.getElementById('axis-desc').textContent = axisDescs[name] || '';
-  renderTable();
-}
+// 予想軸の切り替えUIは「総合予想」へ統合した（血統・騎手は総合予想の構成要素として残る）。
+// currentAxis は既存データ（verify_results・localStorageキャッシュ）との互換のため '馬柱' 固定。
 
 // Table
 function rankClass(r) { return r===1?'r1':r===2?'r2':r===3?'r3':'r-other'; }
@@ -1010,7 +997,10 @@ function sireFitComp(h) {
 // - jockey:   騎手の長期リーディング実績
 // - kinryo:   今回の斤量の軽重
 // fit・venueFitとも、出走数が少ない馬は縮小補正で過大評価を防ぐ
-function computeScore(h) {
+// スコア構成要素を0-100の値で返す純粋関数（DOM非依存・馬名ハッシュを含まない）。
+// 欠損はnull＝「情報なし」で、0（情報があって低評価）と区別する。
+// 参考スコア（computeScore）と総合勝率モデルの特徴量の両方がここを使う。
+function computeScoreComponents(h) {
   const c = h.career;
   const comps = {
     market: h.odds ? Math.min(100, Math.round(Math.sqrt(0.8 / h.odds) * 130)) : null,
@@ -1028,15 +1018,190 @@ function computeScore(h) {
     if (p) { fs += Math.max(0, 9 - p) / 8 * w; fw += w; }
   });
   if (fw) comps.form = Math.round(fs / fw * 100);
+  return comps;
+}
 
+function computeScore(h, opts) {
+  const comps = computeScoreComponents(h);
   const W = AXIS_WEIGHTS[currentAxis] || AXIS_WEIGHTS['馬柱'];
   let sum = 0, wsum = 0;
   for (const k in W) {
     if (comps[k] !== null) { sum += comps[k] * W[k]; wsum += W[k]; }
   }
   let score = wsum ? sum / wsum : 50;
-  score += hashStr(h.name + currentAxis) % 3 - 1;   // 同点回避（±1）
+  // 同点回避のゆらぎ（±1）。確率推定に使うスコアには混ぜない（noJitter）
+  if (!opts || !opts.noJitter) score += hashStr(h.name + currentAxis) % 3 - 1;
   return Math.min(99, Math.max(1, Math.round(score)));
+}
+
+// ===== 単勝・期待値判定（純粋関数群） =====
+// Node側（lib/win-value.js 経由で tools/jv-import.js・バックテスト・テスト）からも
+// 抽出して使うため、この区画の関数はDOM・グローバル状態に依存しない純粋関数にすること。
+const WIN_VALUE_CONFIG = {
+  SCORE_COEF: 0.20,          // 参考スコア(レース内標準化値)で市場確率logitを補正する係数
+  VALUE_BET_THRESHOLD: 120,  // 期待回収率がこの%以上なら購入候補
+  ODDS_SAFETY_FACTOR: 0.95,  // 締切までのオッズ下振れを見込む安全率
+};
+
+// オッズを正の数値として検証（null/0/文字列/負値はnullに）
+function toValidOdds(odds) {
+  const v = typeof odds === 'string' ? parseFloat(odds) : odds;
+  return (typeof v === 'number' && isFinite(v) && v > 0) ? v : null;
+}
+
+// 市場確率：1/オッズをレース内で合計1に正規化（控除率ぶんの超過を吸収）。
+// オッズ欠損馬はnull（正規化の分母にも入れない）
+function normalizeMarketProbabilities(horses) {
+  const raws = horses.map(h => {
+    const o = toValidOdds(h && h.odds);
+    return o ? 1 / o : null;
+  });
+  const total = raws.reduce((s, r) => s + (r || 0), 0);
+  return raws.map(r => (r != null && total > 0) ? r / total : null);
+}
+
+// 予測勝率：市場確率のlogitを参考スコアのz値で補正し、レース内で再正規化。
+// 「市場確率をスコアで補正した暫定推定値」であり、厳密な確率の保証ではない。
+// horses: [{odds, score}] / options.scoreCoef 省略時は WIN_VALUE_CONFIG.SCORE_COEF
+function estimateWinProbabilities(horses, options) {
+  const coef = (options && typeof options.scoreCoef === 'number') ? options.scoreCoef : WIN_VALUE_CONFIG.SCORE_COEF;
+  const marketProbs = normalizeMarketProbabilities(horses);
+  // スコアのレース内標準化（オッズがある馬だけで分布を取る。標準偏差0や欠損はz=0）
+  const scores = horses.map((h, i) => (marketProbs[i] != null && typeof h.score === 'number' && isFinite(h.score)) ? h.score : null);
+  const valid = scores.filter(s => s != null);
+  const mean = valid.length ? valid.reduce((a, b) => a + b, 0) / valid.length : 0;
+  const sd = valid.length ? Math.sqrt(valid.reduce((a, b) => a + (b - mean) * (b - mean), 0) / valid.length) : 0;
+  const EPS = 1e-9;
+  const corrected = marketProbs.map((p, i) => {
+    if (p == null) return null;
+    const z = (sd > EPS && scores[i] != null) ? (scores[i] - mean) / sd : 0;
+    const pc = Math.min(1 - EPS, Math.max(EPS, p));          // logitの発散防止
+    const logit = Math.log(pc / (1 - pc)) + coef * z;
+    return 1 / (1 + Math.exp(-logit));                        // sigmoid
+  });
+  const total = corrected.reduce((s, p) => s + (p || 0), 0);
+  return horses.map((h, i) => ({
+    marketProb: marketProbs[i],
+    predictedWinProb: (corrected[i] != null && total > 0) ? corrected[i] / total : null,
+  }));
+}
+
+// 1頭分の期待値評価。horse: {odds, predictedWinProb}
+// 戻り値 decision: 'buy'（購入候補）/ 'skip'（見送り）/ 'no-odds'（判定不能）
+function calculateWinValue(horse, options) {
+  const threshold = (options && typeof options.threshold === 'number') ? options.threshold : WIN_VALUE_CONFIG.VALUE_BET_THRESHOLD;
+  const safety = (options && typeof options.safetyFactor === 'number') ? options.safetyFactor : WIN_VALUE_CONFIG.ODDS_SAFETY_FACTOR;
+  const odds = toValidOdds(horse && horse.odds);
+  const p = horse ? horse.predictedWinProb : null;
+  if (p == null || !(p > 0)) return {fairOdds: null, effectiveOdds: null, expectedRoiPercent: null, decision: 'no-odds'};
+  const fairOdds = 1 / p;
+  if (odds == null) return {fairOdds, effectiveOdds: null, expectedRoiPercent: null, decision: 'no-odds'};
+  const effectiveOdds = odds * safety;
+  const expectedRoiPercent = p * effectiveOdds * 100;
+  return {fairOdds, effectiveOdds, expectedRoiPercent, decision: expectedRoiPercent >= threshold ? 'buy' : 'skip'};
+}
+
+// レース全体の単勝期待値判定。horses: [{num, odds, score, ...}]
+// 戻り値: {horses: 各馬に marketProb/predictedWinProb/fairOdds/expectedRoiPercent/decision を付与した配列,
+//          pick: 推奨1頭（購入候補のうち期待回収率最大） or null, skipRace: 推奨なしならtrue}
+function evaluateWinRace(horses, options) {
+  const probs = estimateWinProbabilities(horses, options);
+  const evaluated = horses.map((h, i) => {
+    const v = calculateWinValue({odds: h.odds, predictedWinProb: probs[i].predictedWinProb}, options);
+    return Object.assign({}, h, probs[i], v);
+  });
+  // 購入候補から1頭だけ：期待回収率 > 予測勝率 > 馬番の小さい順
+  let pick = null;
+  for (const h of evaluated) {
+    if (h.decision !== 'buy') continue;
+    if (!pick
+      || h.expectedRoiPercent > pick.expectedRoiPercent
+      || (h.expectedRoiPercent === pick.expectedRoiPercent && (h.predictedWinProb > pick.predictedWinProb
+        || (h.predictedWinProb === pick.predictedWinProb && h.num < pick.num)))) pick = h;
+  }
+  return {horses: evaluated, pick, skipRace: !pick};
+}
+
+// ===== 総合勝率モデル（市場オフセット付きsoftmax・純粋関数群） =====
+// logit_i = log(marketProb_i) + Σ β_f・z_f + Σ γ_f・missing_f
+// predictedWinProb_i = softmax(logit)_i （レース内で合計1）
+// 係数が全て0なら市場確率と厳密に一致する（＝市場がベースライン）。
+// 学習は tools/train-win-model.js（2015〜2021年のみ）。Node側は lib/win-model.js が抽出して共有。
+const WIN_MODEL_FEATURES = ['form', 'career', 'fit', 'venueFit', 'agari', 'jockey', 'kinryo'];
+const WIN_MODEL_FEATURE_LABELS = {
+  form: '近走内容', career: '通算実績', fit: 'コース・距離適性', venueFit: '同競馬場実績',
+  agari: '上がり評価', jockey: '騎手成績', kinryo: '斤量',
+};
+
+// レース内標準化：z=(値-レース内平均)/レース内標準偏差。
+// 欠損はz=0（＝平均扱い）とし、別途missing=1のフラグを持つことで
+// 「欠損＝平均」と「本当に平均」をモデルが区別できるようにする。標準偏差0もz=0。
+function standardizeFeaturesInRace(horses, features) {
+  const feats = features || WIN_MODEL_FEATURES;
+  const stats = {};
+  for (const f of feats) {
+    const vals = horses.map(h => (h && typeof h[f] === 'number' && isFinite(h[f])) ? h[f] : null);
+    const ok = vals.filter(v => v != null);
+    const mean = ok.length ? ok.reduce((a, b) => a + b, 0) / ok.length : 0;
+    const sd = ok.length ? Math.sqrt(ok.reduce((a, b) => a + (b - mean) * (b - mean), 0) / ok.length) : 0;
+    stats[f] = {vals, mean, sd};
+  }
+  return horses.map((h, i) => {
+    const z = {}, missing = {};
+    for (const f of feats) {
+      const s = stats[f];
+      missing[f] = s.vals[i] == null ? 1 : 0;
+      z[f] = (s.vals[i] == null || s.sd <= 1e-9) ? 0 : (s.vals[i] - s.mean) / s.sd;
+    }
+    return {z, missing};
+  });
+}
+
+// 総合モデルの予測勝率。horses: [{odds, form, career, ...}] / model: models/win-model.json の中身
+// - modelがnull・不正な場合は市場確率へ安全にフォールバック
+// - オッズ欠損馬は predictedWinProb=null（softmaxにも入れない。標準化の分布には入れる）
+// - softmaxは最大logitを引く数値安定版
+function predictWinModel(horses, model) {
+  const marketProbs = normalizeMarketProbabilities(horses);
+  const usable = model && model.coef && Array.isArray(model.features) && model.features.length;
+  if (!usable) {
+    return horses.map((h, i) => ({marketProb: marketProbs[i], predictedWinProb: marketProbs[i], z: null, missing: null}));
+  }
+  const std = standardizeFeaturesInRace(horses, model.features);
+  const logits = horses.map((h, i) => {
+    const p = marketProbs[i];
+    if (p == null || !(p > 0)) return null;
+    let lg = Math.log(p);
+    for (const f of model.features) {
+      lg += (Number(model.coef[f]) || 0) * std[i].z[f];
+      lg += (Number(model.missingCoef && model.missingCoef[f]) || 0) * std[i].missing[f];
+    }
+    return lg;
+  });
+  const valid = logits.filter(v => v != null);
+  if (!valid.length) {
+    return horses.map((h, i) => ({marketProb: marketProbs[i], predictedWinProb: marketProbs[i], z: std[i].z, missing: std[i].missing}));
+  }
+  const mx = Math.max(...valid);
+  const exps = logits.map(lg => lg == null ? null : Math.exp(lg - mx));
+  const total = exps.reduce((s, e) => s + (e || 0), 0);
+  return horses.map((h, i) => ({
+    marketProb: marketProbs[i],
+    predictedWinProb: exps[i] != null && total > 0 ? exps[i] / total : null,
+    z: std[i].z, missing: std[i].missing,
+  }));
+}
+
+// 寄与度（表示用）: contribution = 係数 × 標準化特徴量。プラス/マイナス上位topN件ずつ
+function winModelContributions(pred, model, topN) {
+  if (!pred || !pred.z || !model || !model.coef) return {plus: [], minus: []};
+  const n = topN || 2;
+  const items = (model.features || []).map(f => ({f, v: (Number(model.coef[f]) || 0) * pred.z[f]}))
+    .filter(it => isFinite(it.v) && Math.abs(it.v) > 1e-9);
+  return {
+    plus: items.filter(it => it.v > 0).sort((a, b) => b.v - a.v).slice(0, n),
+    minus: items.filter(it => it.v < 0).sort((a, b) => a.v - b.v).slice(0, n),
+  };
 }
 
 function renderTable() {
@@ -1212,10 +1377,141 @@ function buildCombos(betType, picks) {
   return [];
 }
 
+// ===== 単勝・期待値判定のUI =====
+// 全頭を対象に「推定勝率×現在オッズ」の期待回収率で購入/見送りを判定する。
+// 市場確率はレース全体の正規化が前提のため、馬の選択状態とは独立に全頭で評価する。
+// 推定勝率は、検証条件を満たして採用された総合モデル（models/win-model.json）があれば
+// それを使い、不採用・取得失敗時は市場確率へ安全にフォールバックする。
+let winValueSeq = 0;
+let winModel = null;          // 採用済みの総合モデル（不採用・取得失敗はnullのまま）
+let winModelLoaded = false;
+async function loadWinModel() {
+  if (winModelLoaded) return winModel;
+  winModelLoaded = true;
+  try {
+    const json = await apiGet({action: 'win-model'});
+    // adopted=true（調整確認期間で市場単独を上回った）モデルだけをUIで使う
+    if (json.model && json.model.adopted === true && Array.isArray(json.model.features)) winModel = json.model;
+  } catch { /* 取得失敗 → 市場確率ベースのまま */ }
+  return winModel;
+}
+
+async function generateWinValueYoso() {
+  // 各馬の特徴量（スコア構成要素）を付けて評価する
+  const scored = horses.map(h => Object.assign({num: h.num, name: h.name, odds: h.odds}, computeScoreComponents(h)));
+  const seq = ++winValueSeq;
+  await loadWinModel();
+  if (seq !== winValueSeq || !horses.length) return;   // 待機中に予想し直されたら破棄
+  renderWinValueResult(scored, currentOddsTime, false);
+  refreshWinValueOdds(scored, seq);   // 発売中オッズを非同期で取得して更新
+}
+
+// 発売中の単勝オッズを取得できたら、そのオッズで判定を出し直す
+async function refreshWinValueOdds(scored, seq) {
+  if (!currentRaceId) return;
+  try {
+    const json = await apiGet({action: 'odds', race_id: currentRaceId, bet: '単勝'});
+    if (seq !== winValueSeq || !json.odds) return;   // 別の予想に切り替え済みなら破棄
+    const updated = scored.map(h => {
+      const e = json.odds[String(h.num)] || json.odds[String(h.num).padStart(2, '0')];
+      const o = e && parseFloat(e[0]);
+      return o ? {...h, odds: o} : h;
+    });
+    renderWinValueResult(updated, json.official || null, true);
+  } catch { /* 取得失敗時は出馬表時点のオッズ表示のまま */ }
+}
+
+function renderWinValueResult(scored, oddsTime, isLive) {
+  // 推定勝率：採用済み総合モデル or 市場確率（predictWinModelがnullモデルで市場へフォールバック）
+  const preds = predictWinModel(scored, winModel);
+  const evaluated = scored.map((h, i) => Object.assign({}, h,
+    {marketProb: preds[i].marketProb, predictedWinProb: preds[i].predictedWinProb, pred: preds[i]},
+    calculateWinValue({odds: h.odds, predictedWinProb: preds[i].predictedWinProb})));
+  // 購入候補から1頭だけ：期待回収率 > 予測勝率 > 馬番の小さい順
+  let pickH = null;
+  for (const h of evaluated) {
+    if (h.decision !== 'buy') continue;
+    if (!pickH
+      || h.expectedRoiPercent > pickH.expectedRoiPercent
+      || (h.expectedRoiPercent === pickH.expectedRoiPercent && (h.predictedWinProb > pickH.predictedWinProb
+        || (h.predictedWinProb === pickH.predictedWinProb && h.num < pickH.num)))) pickH = h;
+  }
+  const th = WIN_VALUE_CONFIG.VALUE_BET_THRESHOLD;
+  const sf = WIN_VALUE_CONFIG.ODDS_SAFETY_FACTOR;
+  const pct = p => p == null ? '–' : (p * 100).toFixed(1) + '%';
+  const oddsF = o => o == null ? '–' : Number(o).toFixed(1) + '倍';
+  const roiF = r => r == null ? '–' : Math.round(r) + '%';
+  const sorted = [...evaluated].sort((a, b) => (b.expectedRoiPercent ?? -1) - (a.expectedRoiPercent ?? -1));
+  yosoHorses = sorted;
+  yosoPicks = pickH ? [pickH] : [];
+
+  // 寄与度（総合モデル使用時のみ）: 係数×標準化特徴量の上位2件ずつ
+  const contribHtml = h => {
+    if (!winModel || !h.pred) return '';
+    const c = winModelContributions(h.pred, winModel, 2);
+    if (!c.plus.length && !c.minus.length) return '';
+    const label = it => WIN_MODEL_FEATURE_LABELS[it.f] || it.f;
+    return `<div style="margin-top:4px;font-size:12px;color:var(--text2)">`
+      + (c.plus.length ? `プラス要因: ${c.plus.map(label).map(esc).join('・')}` : '')
+      + (c.plus.length && c.minus.length ? '　' : '')
+      + (c.minus.length ? `マイナス要因: ${c.minus.map(label).map(esc).join('・')}` : '')
+      + '</div>';
+  };
+
+  document.getElementById('honmei-label').textContent = '💰 総合予想・単勝期待値判定';
+  const pick = pickH;
+  document.getElementById('honmei-area').innerHTML = pick
+    ? `<span class="yoso-tag">◎ ${pick.num}番 ${esc(pick.name)}</span>
+       <div style="margin-top:8px;font-size:13px;line-height:2">
+         現在オッズ <strong>${oddsF(pick.odds)}</strong> ／ 推定勝率 <strong>${pct(pick.predictedWinProb)}</strong> ／ 適正オッズ <strong>${oddsF(pick.fairOdds)}</strong><br>
+         安全率考慮後の期待回収率 <strong class="green">${roiF(pick.expectedRoiPercent)}</strong>
+         ／ <strong class="green">判定：購入候補</strong>（単勝1点）
+       </div>${contribHtml(pick)}`
+    : `<div style="font-size:13px;line-height:1.9">🙅 <strong>このレースは単勝の期待値条件を満たす馬がないため見送りです</strong><br>
+       <span style="color:var(--text2)">安全率考慮後の期待回収率が${th}%以上の馬がいません</span></div>`;
+  document.getElementById('taikou-label').style.display = 'none';
+  document.getElementById('taikou-area').style.display = 'none';
+
+  // 判定根拠：全頭の内訳（期待回収率の高い順）
+  let table = '<div class="table-wrap" style="margin-top:8px"><table><thead><tr><th>馬番</th><th>馬名</th><th>現在<br>オッズ</th><th>推定<br>勝率</th><th>適正<br>オッズ</th><th>期待回収率<br><span style="font-weight:400">(安全率込)</span></th><th>判定</th></tr></thead><tbody>';
+  for (const h of sorted) {
+    const buy = h.decision === 'buy';
+    table += `<tr${pick && h.num === pick.num ? ' style="background:rgba(62,207,142,0.08)"' : ''}>
+      <td><strong>${h.num}</strong></td>
+      <td style="text-align:left;white-space:nowrap">${esc(h.name)}</td>
+      <td style="white-space:nowrap">${oddsF(h.odds)}</td>
+      <td>${pct(h.predictedWinProb)}</td>
+      <td style="white-space:nowrap">${oddsF(h.fairOdds)}</td>
+      <td class="${buy ? 'green' : ''}" style="font-weight:600">${roiF(h.expectedRoiPercent)}</td>
+      <td style="white-space:nowrap">${h.decision === 'no-odds' ? '<span style="color:var(--text3)">判定不能</span>' : buy ? '<span class="green">購入候補</span>' : '<span style="color:var(--text3)">見送り</span>'}</td>
+    </tr>`;
+  }
+  table += '</tbody></table></div>';
+  const timeNote = oddsTime
+    ? `オッズは ${esc(String(oddsTime).slice(11, 16))} 時点${isLive ? '（発売中オッズ）' : '（出馬表取得時点）'}`
+    : 'オッズ時刻は取得できませんでした';
+  const modelNote = winModel
+    ? `総合モデル ${esc(winModel.version || '')}（学習 ${esc(winModel.train?.from || '?')}〜${esc(winModel.train?.to || '?')}）`
+    : '市場確率ベースの暫定推定';
+  document.getElementById('yoso-kaime').innerHTML =
+    `📋 判定根拠（全${sorted.length}頭・期待回収率順）${table}
+     <span class="kaime-note">推定方法：${modelNote} ／ 使用した閾値：期待回収率${th}%以上で購入候補（オッズに安全率×${sf}を適用）／ ${timeNote}</span>`;
+
+  document.getElementById('yoso-comment').textContent = winModel
+    ? '推定勝率は市場オッズを総合モデル（近走・適性・騎手など）で補正した推定値です。オッズは締切まで変動します。回収率を保証するものではありません。'
+    : '推定勝率は市場オッズにもとづく暫定推定です。オッズは締切まで変動します。回収率を保証するものではありません。';
+
+  document.getElementById('yoso-result').style.display = 'block';
+  document.getElementById('bet-form').style.display = 'grid';
+}
+
 function generateYoso() {
   if (!horses.length) { showToast('先に「出馬表を取得」でデータを読み込んでください'); return; }
 
   const betType = document.getElementById('bet-type').value;
+  // 単勝は期待値判定方式（推定勝率×オッズで買う/見送るを判断）
+  if (betType === '単勝') { generateWinValueYoso(); return; }
+  document.getElementById('honmei-label').textContent = '◎ 本命';
   const cfg = BET_CONFIG[betType] || BET_CONFIG['馬連'];
 
   // 2頭以上選択していればその中から、なければ全頭から
@@ -1252,7 +1548,7 @@ function generateYoso() {
   const styleNote = cfg.style === 'win' ? '。1着候補重視（勝率を加点）' : cfg.style === 'place' ? '。3着以内の安定感重視（複勝率を加点）' : '';
   const sireNote = currentAxis === '血統' && top.sire ? `（${top.sire}産駒）` : '';
   const careerNote = top.career?.n ? `。直近10年${top.career.n}戦${top.career.w}勝${top.career.fitN ? `・同条件複勝${top.career.fitP3}/${top.career.fitN}` : ''}` : '';
-  let comment = `${currentAxis}軸×${betType}${styleNote}（${poolDesc}から）。◎${top.name}${sireNote}が最上位${careerNote}`;
+  let comment = `総合予想×${betType}${styleNote}（${poolDesc}から）。◎${top.name}${sireNote}が最上位${careerNote}`;
   if (picks[1]) comment += `。○${picks[1].name}が対抗`;
   comment += '。';
   document.getElementById('yoso-comment').textContent = comment;
@@ -1674,7 +1970,7 @@ function renderReport(agg, detail, outEl) {
   }
   if (curGroup) html += '</div>';
   html += '</div></details>';
-  html += '<div class="kaime-note" style="display:block;margin-top:10px">※ 直近7日の全レースを対象に、馬柱軸のスコアによる推奨買い目（1点100円）を全券種で購入した想定。オッズ・払戻は確定値、各馬の戦績集計はレース当日より前のデータのみ使用。検証済みレースはブラウザに保存され、2回目以降は高速に表示されます。</div>';
+  html += '<div class="kaime-note" style="display:block;margin-top:10px">※ 直近7日の全レースを対象に、総合予想のスコアによる推奨買い目（1点100円）を全券種で購入した想定。オッズ・払戻は確定値、各馬の戦績集計はレース当日より前のデータのみ使用。検証済みレースはブラウザに保存され、2回目以降は高速に表示されます。</div>';
   outEl.innerHTML = html;
 }
 
@@ -1869,8 +2165,9 @@ function gridSearch(records, minN) {
   for (const s of segs.values()) {
     if (s.n < minN || !s.invest) continue;
     const R = s.ret / s.invest;
-    // 「堅めに見た回収率」= 回収率（払戻合計÷投資合計）の分散をデルタ法で見積もった5%下限。
-    // 旧実装のブートストラップと同等の値を、レース配列を持たずに出す
+    // 「統計的下限」= 回収率（払戻合計÷投資合計）の分散をデルタ法で見積もった5%下限。
+    // 旧実装のブートストラップと同等の値を、レース配列を持たずに出す。
+    // 同一データ内で条件探索と評価を行っているため、探索バイアス（多重比較）は未補正＝参考値
     const varZ = Math.max(0, (s.syy - 2 * R * s.sxy + R * R * s.sxx) / s.n);
     const xbar = s.invest / s.n;
     const lower = R - 1.645 * Math.sqrt(varZ / s.n) / xbar;
@@ -1979,7 +2276,7 @@ function renderGridSearch(segs, total, minN, outEl) {
 
   const table = (rows, emptyMsg) => {
     if (!rows.length) return `<div class="empty">${emptyMsg}</div>`;
-    let h = '<div class="table-wrap"><table><thead><tr><th>いつ買うか（条件）</th><th>何を買うか</th><th>レース数</th><th>的中率</th><th>回収率</th><th>堅めに見た<br>回収率</th><th>予想で<br>使う</th></tr></thead><tbody>';
+    let h = '<div class="table-wrap"><table><thead><tr><th>いつ買うか（条件）</th><th>何を買うか</th><th>レース数</th><th>的中率</th><th>回収率</th><th>統計的下限<br><span style="font-weight:400">(探索バイアス<br>未補正)</span></th><th>予想で<br>使う</th></tr></thead><tbody>';
     for (const s of rows) {
       h += `<tr${s.roi >= 110 ? ' style="background:rgba(62,207,142,0.06)"' : ''}>
         <td style="text-align:left">${s.roiLower >= 110 ? '🏆 ' : ''}${esc(condText(s.conds))}</td>
@@ -2011,7 +2308,7 @@ function renderGridSearch(segs, total, minN, outEl) {
   html += `<div class="card-title" style="margin-top:1.25rem">くらべる用：条件をつけず全レース買った場合</div>`;
   html += table(baselines, 'データ不足');
   html += '</div></details>';
-  html += `<div class="kaime-note" style="display:block;margin-top:10px">※ ${lastGrid ? esc(lastGrid.periodLabel) + '（' + esc(lastGrid.from) + '〜' + esc(lastGrid.to) + '）の' : 'ためた'}${total}レースから「条件×買い方」を総当たりで集計。回収率=賭けた金額に対して戻ってきた金額の割合（100%より上なら増えている）。「堅めに見た回収率」は運が悪かった場合を想定した控えめな見積もりで、これも110%を超えていたら本物の可能性大（🏆）。気に入った行は「⭐ 使う」で保存すると、予想ページで条件に合うレースのときに自動で教えてくれます。</div>`;
+  html += `<div class="kaime-note" style="display:block;margin-top:10px">※ ${lastGrid ? esc(lastGrid.periodLabel) + '（' + esc(lastGrid.from) + '〜' + esc(lastGrid.to) + '）の' : 'ためた'}${total}レースから「条件×買い方」を総当たりで集計。回収率=賭けた金額に対して戻ってきた金額の割合（100%より上なら増えている）。「統計的下限」は同一データ内の回収率のばらつきから見積もった5%下限（多数の条件を探索して良かったものを選ぶこと自体のバイアスは補正していない）。気に入った行は「⭐ 使う」で保存すると、予想ページで条件に合うレースのときに自動で教えてくれます。<br>⚠️ <strong>この表は同じ期間のデータで条件探索と評価を行っているため参考値です。</strong>ここで回収率110%が出ても将来の成績を保証するものではありません。また最低50レース程度では、3連単など高配当券種の評価にはレース数が少なすぎます。</div>`;
   outEl.innerHTML = html;
 }
 
@@ -2111,7 +2408,7 @@ function updateStrategyHints() {
   document.getElementById('strategy-hint').innerHTML = matched.map(({s, unknown, kaime}) =>
     `<div class="yoso-kaime" style="margin-bottom:8px">🏆 このレースは「<strong>${esc(condText(s.conds))}</strong>」に合致
       ${unknown.length ? `<span class="kaime-note">（※当日の${unknown.map(c => `${esc(c.axis)}が「${esc(condText([c]))}」`).join('・')}なら）</span>` : ''}
-      <br>過去${s.n}レースで回収率${s.roi}%（堅めに見て${s.roiLower}%・${esc(s.period || '')}）
+      <br>過去${s.n}レースで回収率${s.roi}%（統計的下限${s.roiLower}%・${esc(s.period || '')}・同一データ内での探索結果のため参考値）
       <br>💡 ${kaime}</div>`).join('');
 }
 

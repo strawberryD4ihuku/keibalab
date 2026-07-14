@@ -1,0 +1,58 @@
+{
+  "version": "win-model-v1",
+  "generatedAt": "2026-07-14T15:06:36.811Z",
+  "features": [
+    "form",
+    "career",
+    "fit",
+    "venueFit",
+    "agari",
+    "jockey",
+    "kinryo"
+  ],
+  "coef": {
+    "form": -0.042422,
+    "career": 0.017942,
+    "fit": -0.028356,
+    "venueFit": -0.03183,
+    "agari": 0.012049,
+    "jockey": -0.003178,
+    "kinryo": 0.00879
+  },
+  "missingCoef": {
+    "form": 0.009944,
+    "career": 0.009944,
+    "fit": 0.02654,
+    "venueFit": -0.002184,
+    "agari": 0.009944,
+    "jockey": 0,
+    "kinryo": 0
+  },
+  "train": {
+    "from": "2015-01-01",
+    "to": "2021-12-31"
+  },
+  "hyper": {
+    "lr": 0.5,
+    "epochs": 500,
+    "l2": 0.0001,
+    "seed": 42
+  },
+  "note": "市場オフセット付きsoftmax。係数が全て0なら市場確率と一致。marketProbは確定オッズ由来",
+  "trainLoss": 1.972351,
+  "trainRaces": 24181,
+  "validation": {
+    "from": "2022-01-01",
+    "to": "2023-12-31",
+    "races": 6911,
+    "horses": 94543,
+    "logLossMarket": 1.91064,
+    "logLossModel": 1.90942,
+    "brierMarket": 0.057898,
+    "brierModel": 0.057852,
+    "top1Market": 0.3358,
+    "top1Model": 0.3415
+  },
+  "adopted": true,
+  "rejectReasons": []
+}
