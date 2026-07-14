@@ -11,6 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const readline = require('readline');
 const iconv = require('iconv-lite');
+const PF = require('../lib/performance-features.js');
 
 // ---- 引数 ----
 const args = process.argv.slice(2);
@@ -81,6 +82,16 @@ const num = (b, off, len) => {
   const s = g(b, off, len).trim();
   return /^\d+$/.test(s) ? parseInt(s, 10) : 0;
 };
+const signedTenths = (b, off, len) => {
+  const s = g(b, off, len).trim();
+  if (!/^[+-]\d+$/.test(s) || s === '+999' || s === '-999') return null;
+  return parseInt(s, 10) / 10;
+};
+const raceTimeSeconds = (b, off) => {
+  const s = g(b, off, 4);
+  if (!/^\d{4}$/.test(s) || s === '0000' || s === '9999') return null;
+  return parseInt(s[0], 10) * 60 + parseInt(s.slice(1), 10) / 10;
+};
 // 巨大ファイル（数GB）でも読めるよう1行ずつストリーミングで返す
 async function* readLines(file) {
   const p = path.join(DIR, file);
@@ -144,6 +155,12 @@ async function parseSE() {
       jockeyCode: g(b, 296, 5),
       jockeyName: gz(b, 306, 8).replace(/[\s　]+$/g, ''),
       rank: num(b, 334, 2),                    // 0 = 取消・除外・中止
+      timeSec: raceTimeSeconds(b, 338),         // 走破タイム（秒）
+      timeDiffSec: b.length >= 535 ? signedTenths(b, 531, 4) : null, // 1着馬との差（1着は2着へ負値）
+      corner1: num(b, 351, 2) || null,
+      corner2: num(b, 353, 2) || null,
+      corner3: num(b, 355, 2) || null,
+      corner4: num(b, 357, 2) || null,
       odds: num(b, 359, 4) / 10 || null,       // 単勝オッズ（確定）
       ninki: num(b, 363, 2) || null,
       agari: num(b, 390, 3) / 10 || null,      // 後3F
@@ -188,6 +205,60 @@ async function parseHR() {
   return payoutsByKey;
 }
 
+// 同じ日より前の走破タイムだけから、コース条件別の速度指数を付与する。
+// 同日レースは一括して「予測後」に基準へ追加するため、後半レースへの当日結果リークもない。
+function attachSpeedFigures(seAll, races) {
+  const byKey = new Map();
+  for (const e of seAll) {
+    if (!byKey.has(e.key)) byKey.set(e.key, []);
+    byKey.get(e.key).push(e);
+  }
+  const groups = new Map();
+  const keysFor = r => [
+    `v|${r.venueCode}|${r.surface}|${r.distance}|${r.baba || ''}`,
+    `v|${r.venueCode}|${r.surface}|${r.distance}`,
+    `s|${r.surface}|${r.distance}`,
+  ];
+  const stat = key => {
+    const a = groups.get(key);
+    if (!a || a.length < 60) return null;
+    const mean = a.reduce((s, x) => s + x, 0) / a.length;
+    const sd = Math.sqrt(a.reduce((s, x) => s + (x - mean) ** 2, 0) / a.length);
+    return sd >= 0.5 ? {mean, sd} : null;
+  };
+  const raceList = [...races.values()].sort((a, b) => a.key.localeCompare(b.key));
+  let i = 0;
+  while (i < raceList.length) {
+    const date = raceList[i].date;
+    let j = i;
+    while (j < raceList.length && raceList[j].date === date) j++;
+    // 当日全レースの指数を、前日までの基準で計算
+    for (let k = i; k < j; k++) {
+      const race = raceList[k];
+      const base = keysFor(race).map(stat).find(Boolean);
+      if (!base) continue;
+      for (const e of (byKey.get(race.key) || [])) {
+        if (e.timeSec == null || !e.rank) continue;
+        e.speedFigure = Math.max(-4, Math.min(4, (base.mean - e.timeSec) / base.sd));
+      }
+    }
+    // 計算後に当日結果を基準へ追加（各条件は直近800頭走）
+    for (let k = i; k < j; k++) {
+      const race = raceList[k];
+      for (const e of (byKey.get(race.key) || [])) {
+        if (e.timeSec == null || !e.rank) continue;
+        for (const key of keysFor(race)) {
+          let a = groups.get(key);
+          if (!a) { a = []; groups.set(key, a); }
+          a.push(e.timeSec);
+          if (a.length > 800) a.shift();
+        }
+      }
+    }
+    i = j;
+  }
+}
+
 // ---- メイン ----
 async function main() {
   const scoring = loadScoring();
@@ -195,6 +266,7 @@ async function main() {
   const seAll = await parseSE();
   const payoutsByKey = await parseHR();
   console.log(`RA=${races.size}レース SE=${seAll.length}頭走 HR=${payoutsByKey.size}レース分の払戻`);
+  attachSpeedFigures(seAll, races);
 
   // 馬・騎手の走歴インデックス（日付昇順）
   const byHorse = new Map();
@@ -202,7 +274,13 @@ async function main() {
   for (const e of seAll) {
     const race = races.get(e.key);
     if (!race || !e.rank) continue;   // 取消等は履歴に入れない
-    const run = {date: race.date, rank: e.rank, agari: e.agari, surface: race.surface, distance: race.distance, venueCode: race.venueCode};
+    const run = {
+      date: race.date, rank: e.rank, agari: e.agari,
+      surface: race.surface, distance: race.distance, venueCode: race.venueCode,
+      raceClass: race.raceClass, timeSec: e.timeSec, timeDiffSec: e.timeDiffSec,
+      speedFigure: e.speedFigure ?? null,
+      corner1: e.corner1, corner2: e.corner2, corner3: e.corner3, corner4: e.corner4,
+    };
     if (!byHorse.has(e.horseId)) byHorse.set(e.horseId, []);
     byHorse.get(e.horseId).push(run);
     if (!byJockey.has(e.jockeyCode)) byJockey.set(e.jockeyCode, []);
@@ -254,6 +332,7 @@ async function main() {
       // レース当日より前の走歴のみ使用（リーク防止・フロントと同じ規約）
       const runs = (byHorse.get(e.horseId) || []).filter(r => r.date < race.date);
       const past = runs.slice(-5).reverse();
+      const performance = PF.summarizePerformance(past);
       const career = {n: 0, w: 0, p3: 0, fitN: 0, fitW: 0, fitP3: 0, venueN: 0, venueP3: 0};
       for (const r of runs) {
         career.n++;
@@ -279,6 +358,9 @@ async function main() {
         career: career.n ? career : null,
         jockeyStats,
         sireStats: null,
+        marginForm: performance.marginForm,
+        classLevel: performance.classLevel,
+        speedForm: performance.speedForm,
       };
     });
     horses.forEach(h => { h.score = scoring.computeScore(h); });
@@ -312,6 +394,10 @@ async function main() {
             form: comps.form, career: comps.career, fit: comps.fit,
             venueFit: comps.venueFit, agari: comps.agari,
             jockey: comps.jockey, kinryo: comps.kinryo, sireFit: comps.sireFit,
+            // 直近5走の着差（距離1000m換算）と対戦クラス。今回レースより前だけで計算。
+            marginForm: r4(horses[i].marginForm, 5),
+            classLevel: r4(horses[i].classLevel, 5),
+            speedForm: r4(horses[i].speedForm, 5),
           };
         }),
         pick: wv.pick ? wv.pick.num : null,

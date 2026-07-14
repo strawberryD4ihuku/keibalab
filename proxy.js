@@ -11,6 +11,7 @@ const VENUE_CODE = {
 
 const fs = require('fs');
 const path = require('path');
+const PF = require('./lib/performance-features.js');
 
 const server = http.createServer(async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -223,31 +224,48 @@ async function mergeCareers(horses, venue, surface, distance, untilTs) {
 function parseCareer(html, venue, surface, distance, untilTs) {
   const tbl = html.match(/class="db_h_race_results[\s\S]*?<\/table>/)?.[0] || '';
   const rows = [...tbl.matchAll(/<tr[^>]*>[\s\S]*?<\/tr>/g)].slice(1);
+  const clean = s => String(s || '').replace(/<[^>]*>/g, '').replace(/&nbsp;|&#160;/g, ' ').trim();
+  const headers = [...tbl.matchAll(/<th[^>]*>([\s\S]*?)<\/th>/g)].map(x => clean(x[1]));
+  const col = (name, fallback) => {
+    const i = headers.findIndex(h => h === name || h.includes(name));
+    return i >= 0 ? i : fallback;
+  };
+  const dateCol = col('日付', 0), venueCol = col('開催', 1), raceNameCol = col('レース名', 4);
+  const rankCol = col('着順', 11), distanceCol = col('距離', 14), marginCol = col('着差', 18);
   const cutoff = (untilTs || Date.now()) - 10 * 365.25 * 86400 * 1000;
   const s = {n: 0, w: 0, p3: 0, fitN: 0, fitW: 0, fitP3: 0, venueN: 0, venueP3: 0};
+  const performanceRuns = [];
   for (const m of rows) {
     const cells = [...m[0].matchAll(/<td[^>]*>([\s\S]*?)<\/td>/g)]
-      .map(c => c[1].replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').trim());
+      .map(c => clean(c[1]));
     if (cells.length < 20) continue;
-    const d = new Date(cells[0].replace(/\//g, '-'));
+    const d = new Date(cells[dateCol].replace(/\//g, '-'));
     if (isNaN(d.getTime()) || d.getTime() < cutoff) continue;
     if (untilTs && d.getTime() >= untilTs) continue;   // レース当日以降の走は使わない
-    const rank = parseInt(cells[11]);
+    const rank = parseInt(cells[rankCol]);
     if (!rank) continue;   // 中止・除外・取消はスキップ
     s.n++;
     if (rank === 1) s.w++;
     if (rank <= 3) s.p3++;
-    const dm = cells[14].match(/([芝ダ障])(\d{3,4})/);
+    const dm = cells[distanceCol].match(/([芝ダ障])(\d{3,4})/);
     if (dm && surface && dm[1] === surface && distance && Math.abs(parseInt(dm[2]) - distance) <= 200) {
       s.fitN++;
       if (rank === 1) s.fitW++;
       if (rank <= 3) s.fitP3++;
     }
-    if (venue && cells[1].includes(venue)) {
+    if (venue && cells[venueCol].includes(venue)) {
       s.venueN++;
       if (rank <= 3) s.venueP3++;
     }
+    const marginText = cells[marginCol] || '';
+    const timeDiffSec = /^[-+]?\d+(?:\.\d+)?$/.test(marginText) ? Number(marginText) : null;
+    performanceRuns.push({
+      timeDiffSec,
+      distance: dm ? parseInt(dm[2], 10) : null,
+      raceClass: cells[raceNameCol] || null,
+    });
   }
+  Object.assign(s, PF.summarizePerformance(performanceRuns));
   return s;
 }
 

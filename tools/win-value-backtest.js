@@ -27,6 +27,7 @@ const argOf = (name, def) => {
 const DIR = argOf('--dir', 'jvdata2000');
 const WIN_FILE = argOf('--win', path.join(DIR, 'win_value_rows.json'));
 const VERIFY_FILE = argOf('--verify', path.join(DIR, 'verify_rows.json'));
+const MODEL_FILE = argOf('--model', WM.MODEL_PATH);
 
 const THRESHOLD = WV.WIN_VALUE_CONFIG.VALUE_BET_THRESHOLD;   // 120（固定）
 const SAFETY = WV.WIN_VALUE_CONFIG.ODDS_SAFETY_FACTOR;       // 0.95（固定）
@@ -99,7 +100,7 @@ function main() {
     console.error(`${WIN_FILE} がありません。先に node tools/jv-import.js --dir ${DIR} を実行してください`);
     process.exit(1);
   }
-  const model = WM.loadModel();
+  const model = WM.loadModel(MODEL_FILE);
   const rows = JSON.parse(fs.readFileSync(WIN_FILE, 'utf8')).sort((a, b) => a.date.localeCompare(b.date));
 
   // 期間×モデルの統計

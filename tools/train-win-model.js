@@ -161,7 +161,7 @@ function evaluate(rows, model) {
 }
 
 // 採用条件の自動判定（調整確認期間 2022-2023 のみで判断）
-function decideAdoption(st) {
+function decideAdoption(st, incumbentSt) {
   const reasons = [];
   const llMarket = st.market.sumLL / st.races;
   const llModel = st.model.sumLL / st.races;
@@ -186,6 +186,16 @@ function decideAdoption(st) {
   if (hi.n >= 50 && hi.ret / (hi.n * 100) < 0.47) {
     reasons.push(`期待回収率100%以上の帯の実回収率が極端に低い (${(hi.ret / hi.n).toFixed(1)}%)`);
   }
+  if (incumbentSt && incumbentSt.races) {
+    const incumbentLL = incumbentSt.model.sumLL / incumbentSt.races;
+    const incumbentBrier = incumbentSt.model.sumBrier / incumbentSt.horses;
+    if (!(llModel < incumbentLL - 1e-9)) {
+      reasons.push(`現行採用モデルよりLogLossが改善していない (candidate=${llModel.toFixed(5)} >= incumbent=${incumbentLL.toFixed(5)})`);
+    }
+    if (brModel > incumbentBrier + 1e-9) {
+      reasons.push(`現行採用モデルよりBrier Scoreが悪化 (candidate=${brModel.toFixed(6)} > incumbent=${incumbentBrier.toFixed(6)})`);
+    }
+  }
   return {
     adopted: reasons.length === 0,
     reasons,
@@ -194,6 +204,8 @@ function decideAdoption(st) {
       logLossMarket: Number(llMarket.toFixed(5)), logLossModel: Number(llModel.toFixed(5)),
       brierMarket: Number(brMarket.toFixed(6)), brierModel: Number(brModel.toFixed(6)),
       top1Market: Number((st.market.top1 / st.races).toFixed(4)), top1Model: Number((st.model.top1 / st.races).toFixed(4)),
+      incumbentLogLoss: incumbentSt && incumbentSt.races ? Number((incumbentSt.model.sumLL / incumbentSt.races).toFixed(5)) : null,
+      incumbentBrier: incumbentSt && incumbentSt.horses ? Number((incumbentSt.model.sumBrier / incumbentSt.horses).toFixed(6)) : null,
     },
   };
 }
@@ -202,13 +214,18 @@ function main() {
   const DIR = argOf('--dir', 'jvdata2000');
   const file = argOf('--win', path.join(DIR, 'win_value_rows.json'));
   const outFile = argOf('--out', path.join(__dirname, '..', 'models', 'win-model.json'));
+  const productionFile = path.join(__dirname, '..', 'models', 'win-model.json');
+  const incumbentFile = argOf('--incumbent', productionFile);
   if (!fs.existsSync(file)) {
     console.error(`${file} がありません。先に node tools/jv-import.js --dir ${DIR} を実行してください`);
     process.exit(1);
   }
-  const feats = WM.WIN_MODEL_FEATURES;
+  const featureArg = argOf('--features', '');
+  const feats = featureArg ? featureArg.split(',').map(s => s.trim()).filter(Boolean) : WM.WIN_MODEL_FEATURES;
   console.log(`特徴量: ${feats.join(', ')}（sireFit・market・着順は不使用）`);
   const rows = JSON.parse(fs.readFileSync(file, 'utf8')).sort((a, b) => a.date.localeCompare(b.date));
+  let incumbent = null;
+  try { incumbent = JSON.parse(fs.readFileSync(incumbentFile, 'utf8')); } catch { /* 初回学習は比較対象なし */ }
 
   const trainRows = rows.filter(isTrainRow);
   const validRows = rows.filter(isValidRow);
@@ -228,11 +245,15 @@ function main() {
   // 調整確認期間で採用判定
   const model = toModelJson(theta, feats);
   const validEval = evaluate(validRows, model);
-  const decision = decideAdoption(validEval);
+  const incumbentEval = incumbent && incumbent.adopted !== false ? evaluate(validRows, incumbent) : null;
+  const decision = decideAdoption(validEval, incumbentEval);
   console.log(`\n■ 調整確認（${VALID_FROM}〜${VALID_TO}）による採用判定`);
   console.log(`  LogLoss: 市場=${decision.metrics.logLossMarket} → モデル=${decision.metrics.logLossModel}`);
   console.log(`  Brier:   市場=${decision.metrics.brierMarket} → モデル=${decision.metrics.brierModel}`);
   console.log(`  1位的中: 市場=${(decision.metrics.top1Market * 100).toFixed(1)}% → モデル=${(decision.metrics.top1Model * 100).toFixed(1)}%`);
+  if (decision.metrics.incumbentLogLoss != null) {
+    console.log(`  現行採用モデル: LogLoss=${decision.metrics.incumbentLogLoss} / Brier=${decision.metrics.incumbentBrier}`);
+  }
   console.log(decision.adopted ? '  → ✅ 採用条件を満たした' : `  → ❌ 不採用: ${decision.reasons.join(' / ')}`);
 
   const out = toModelJson(theta, feats, {
@@ -242,9 +263,14 @@ function main() {
     adopted: decision.adopted,
     rejectReasons: decision.reasons,
   });
-  fs.mkdirSync(path.dirname(outFile), {recursive: true});
-  fs.writeFileSync(outFile, JSON.stringify(out, null, 2));
-  console.log(`\n保存: ${outFile}（adopted=${out.adopted}）`);
+  const isProduction = path.resolve(outFile) === path.resolve(productionFile);
+  const saveFile = isProduction && !out.adopted
+    ? path.join(path.dirname(outFile), 'win-model-candidate.json')
+    : outFile;
+  fs.mkdirSync(path.dirname(saveFile), {recursive: true});
+  fs.writeFileSync(saveFile, JSON.stringify(out, null, 2));
+  console.log(`\n保存: ${saveFile}（adopted=${out.adopted}）`);
+  if (isProduction && !out.adopted) console.log(`現行採用モデル ${outFile} は上書きしません`);
   feats.forEach(f => console.log(`  β ${f.padEnd(8)} = ${String(out.coef[f]).padStart(10)}   γ missing_${f.padEnd(8)} = ${out.missingCoef[f]}`));
 }
 

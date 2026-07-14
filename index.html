@@ -1131,6 +1131,8 @@ const WIN_MODEL_FEATURES = ['form', 'career', 'fit', 'venueFit', 'agari', 'jocke
 const WIN_MODEL_FEATURE_LABELS = {
   form: '近走内容', career: '通算実績', fit: 'コース・距離適性', venueFit: '同競馬場実績',
   agari: '上がり評価', jockey: '騎手成績', kinryo: '斤量',
+  marginForm: '着差パフォーマンス', classLevel: '対戦クラス',
+  speedForm: '標準化速度指数',
 };
 
 // レース内標準化：z=(値-レース内平均)/レース内標準偏差。
@@ -1398,7 +1400,11 @@ async function loadWinModel() {
 
 async function generateWinValueYoso() {
   // 各馬の特徴量（スコア構成要素）を付けて評価する
-  const scored = horses.map(h => Object.assign({num: h.num, name: h.name, odds: h.odds}, computeScoreComponents(h)));
+  const scored = horses.map(h => Object.assign({
+    num: h.num, name: h.name, odds: h.odds,
+    marginForm: h.career?.marginForm ?? h.marginForm ?? null,
+    classLevel: h.career?.classLevel ?? h.classLevel ?? null,
+  }, computeScoreComponents(h)));
   const seq = ++winValueSeq;
   await loadWinModel();
   if (seq !== winValueSeq || !horses.length) return;   // 待機中に予想し直されたら破棄
@@ -1872,7 +1878,8 @@ async function runWeeklyReport() {
     const races = [];
     for (let i = 0; i < targets.length; i++) {
       const d = targets[i];
-      setProgressBar(progId, 2 + (i / targets.length) * 13, `${d.date} の開催情報を取得中...`);
+      // 準備フェーズ（レース総数が未確定）はバーを最小のまま、ラベルだけ更新して進行を示す
+      setProgressBar(progId, 2, `${d.date} の開催情報を取得中...`);
       try {
         const {venues} = await apiGet({action: 'venues', date: d.date});
         for (const v of venues || [])

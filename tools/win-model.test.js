@@ -160,6 +160,22 @@ test('13. 小さい人工データで学習後に損失が低下する', () => {
   assert.ok(first <= Math.log(4) + 0.01, '初期損失が市場一様(-log 0.25)を超えている');
 });
 
+test('14. 市場より良くても現行採用モデルより悪い候補は不採用になる', () => {
+  const st = {
+    races: 10, horses: 100,
+    market: {sumLL: 20, sumBrier: 6, top1: 3},
+    model: {sumLL: 19, sumBrier: 5, top1: 4, nan: 0, badSum: 0},
+    bands: [], roiBands: [],
+  };
+  const incumbent = {
+    races: 10, horses: 100,
+    model: {sumLL: 18, sumBrier: 4.9},
+  };
+  const d = TR.decideAdoption(st, incumbent);
+  assert.strictEqual(d.adopted, false);
+  assert.ok(d.reasons.some(r => r.includes('現行採用モデルよりLogLoss')));
+});
+
 // ---- index.html からスコアリング一式を抽出（jv-import.jsと同方式の簡易版）----
 function loadScoring(html) {
   const src = html.match(/<script>([\s\S]*?)<\/script>/)[1];

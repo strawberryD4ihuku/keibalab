@@ -16,6 +16,7 @@ interface CareerStats {
   n: number; w: number; p3: number;
   fitN: number; fitW: number; fitP3: number;
   venueN: number; venueP3: number;
+  marginForm: number | null; classLevel: number | null;
 }
 
 interface Horse {
@@ -24,6 +25,44 @@ interface Horse {
   p1: number | null; p2: number | null; p3: number | null; p4: number | null; p5: number | null;
   age3f: number | null; odds: number | null; ninki: number | null; sire: string | null;
   career: CareerStats | null;
+}
+
+function raceClassLevel(value: unknown): number | null {
+  if (value == null) return null;
+  const s = String(value).replace(/Ｇ/g, "G").replace(/[１-３]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xFEE0));
+  if (/J[・･.]?G1/i.test(s)) return 8;
+  if (/J[・･.]?G2/i.test(s)) return 7;
+  if (/J[・･.]?G3/i.test(s)) return 6;
+  if (/G1/i.test(s)) return 8;
+  if (/G2/i.test(s)) return 7;
+  if (/G3/i.test(s)) return 6;
+  if (/リステッド|[（(]L[）)]|^L$/i.test(s)) return 5;
+  if (/重賞/.test(s)) return 5;
+  if (/オープン|ＯＰ|\bOP\b/i.test(s)) return 4;
+  if (/3勝|1600万/.test(s)) return 3;
+  if (/2勝|1000万/.test(s)) return 2;
+  if (/1勝|500万/.test(s)) return 1;
+  if (/新馬|未勝利/.test(s)) return 0;
+  return null;
+}
+
+function summarizePerformance(runs: Array<{timeDiffSec: number | null; distance: number | null; raceClass: string | null}>) {
+  const recent = runs.slice(0, 5);
+  const weighted = (fn: (r: typeof recent[number]) => number | null) => {
+    let sum = 0, weights = 0;
+    recent.forEach((r, i) => {
+      const v = fn(r);
+      if (v == null || !Number.isFinite(v)) return;
+      const w = recent.length - i;
+      sum += v * w; weights += w;
+    });
+    return weights ? sum / weights : null;
+  };
+  return {
+    marginForm: weighted((r) => r.timeDiffSec == null || !(Number(r.distance) > 0)
+      ? null : Math.max(-3, Math.min(1, -r.timeDiffSec * 1000 / Number(r.distance)))),
+    classLevel: weighted((r) => raceClassLevel(r.raceClass)),
+  };
 }
 
 serve(async (req) => {
@@ -205,30 +244,43 @@ function parseCareer(html: string, venue: string, surface: string | null, distan
   const tbl = html.match(/class="db_h_race_results[\s\S]*?<\/table>/)?.[0] || "";
   const rows = [...tbl.matchAll(/<tr[^>]*>[\s\S]*?<\/tr>/g)].slice(1);
   const cutoff = (untilTs || Date.now()) - 10 * 365.25 * 86400 * 1000;
-  const s: CareerStats = {n: 0, w: 0, p3: 0, fitN: 0, fitW: 0, fitP3: 0, venueN: 0, venueP3: 0};
+  const clean = (v: string) => String(v || "").replace(/<[^>]*>/g, "").replace(/&nbsp;|&#160;/g, " ").trim();
+  const headers = [...tbl.matchAll(/<th[^>]*>([\s\S]*?)<\/th>/g)].map((x) => clean(x[1]));
+  const col = (name: string, fallback: number) => { const i = headers.findIndex((h) => h === name || h.includes(name)); return i >= 0 ? i : fallback; };
+  const dateCol = col("日付", 0), venueCol = col("開催", 1), raceNameCol = col("レース名", 4);
+  const rankCol = col("着順", 11), distanceCol = col("距離", 14), marginCol = col("着差", 18);
+  const s: CareerStats = {n: 0, w: 0, p3: 0, fitN: 0, fitW: 0, fitP3: 0, venueN: 0, venueP3: 0, marginForm: null, classLevel: null};
+  const performanceRuns: Array<{timeDiffSec: number | null; distance: number | null; raceClass: string | null}> = [];
   for (const m of rows) {
     const cells = [...m[0].matchAll(/<td[^>]*>([\s\S]*?)<\/td>/g)]
-      .map((c) => c[1].replace(/<[^>]*>/g, "").replace(/&nbsp;/g, " ").trim());
+      .map((c) => clean(c[1]));
     if (cells.length < 20) continue;
-    const d = new Date(cells[0].replace(/\//g, "-"));
+    const d = new Date(cells[dateCol].replace(/\//g, "-"));
     if (isNaN(d.getTime()) || d.getTime() < cutoff) continue;
     if (untilTs && d.getTime() >= untilTs) continue;   // レース当日以降の走は使わない
-    const rank = parseInt(cells[11]);
+    const rank = parseInt(cells[rankCol]);
     if (!rank) continue;   // 中止・除外・取消はスキップ
     s.n++;
     if (rank === 1) s.w++;
     if (rank <= 3) s.p3++;
-    const dm = cells[14].match(/([芝ダ障])(\d{3,4})/);
+    const dm = cells[distanceCol].match(/([芝ダ障])(\d{3,4})/);
     if (dm && surface && dm[1] === surface && distance && Math.abs(parseInt(dm[2]) - distance) <= 200) {
       s.fitN++;
       if (rank === 1) s.fitW++;
       if (rank <= 3) s.fitP3++;
     }
-    if (venue && cells[1].includes(venue)) {
+    if (venue && cells[venueCol].includes(venue)) {
       s.venueN++;
       if (rank <= 3) s.venueP3++;
     }
+    const marginText = cells[marginCol] || "";
+    performanceRuns.push({
+      timeDiffSec: /^[-+]?\d+(?:\.\d+)?$/.test(marginText) ? Number(marginText) : null,
+      distance: dm ? parseInt(dm[2], 10) : null,
+      raceClass: cells[raceNameCol] || null,
+    });
   }
+  Object.assign(s, summarizePerformance(performanceRuns));
   return s;
 }
 
