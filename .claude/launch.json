@@ -7,6 +7,12 @@
       "runtimeArgs": ["proxy.js"],
       "port": 3001,
       "autoPort": true
+    },
+    {
+      "name": "fansite-static",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "http.server", "8765", "--directory", "C:/work/sakimiyashita_master"],
+      "port": 8765
     }
   ]
 }
