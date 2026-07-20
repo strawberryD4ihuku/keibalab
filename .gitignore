@@ -6,3 +6,6 @@ jvdata/
 jvdata2/
 jvdata*/
 jvcache/
+jvtrain/
+# 学習の候補モデル（採用時のみ models/win-model.json を更新する。結果はREADMEに記録）
+models/*-candidate.json

@@ -29,6 +29,11 @@ C:\WINDOWS\SysWOW64\WindowsPowerShell\v1.0\powershell.exe -File tools\jv-fetch.p
 
 - Option: `1`=通常差分 / `4`=セットアップ（全期間。初回はダイアログ承認が要る）。
 - 出力: `<OutDir>\{RA,SE,HR}.txt`（1行=1レコード・UTF-8）、`status.txt`（進捗）。
+- `-DataSpec` でデータ種別を変えられる（既定 `RACE`）。坂路調教は
+  `-DataSpec SLOP -Types HC`、ウッド調教は `-DataSpec WOOD -Types WC`（出力先は `jvtrain\` を使う）。
+- `-Append` で既存の種別ファイルへ追記する（差分取得用）。調教データの最新化は
+  レース当日朝に `-From <前回取得日時> -OutDir C:\work\keibaLab\jvtrain -DataSpec SLOP -Types HC -Append`。
+  重複行が混ざっても特徴量側（`lib/training-features.js`）で除去される。
 - 分析に不要な種別（O1-O6=オッズ, H1/H6=票数, JG=障害飛越, WF=重勝）はファイルごと `JVSkip` で読み飛ばす。
 - 生ファイル(.jvd)は `jvcache\` に保存される（`JVSetSaveFlag`）。
 
@@ -49,6 +54,8 @@ node tools/jv-import.js --dir jvdata2000 --out jvdata2000/verify_rows.json
 
 - `index.html` から `computeScore` などのスコアリングを実行時に抽出して使う
   （フロントと完全に同一ロジックを保証）。
+- `--train-dir`（既定 `jvtrain`）に `HC.txt` があれば坂路調教特徴量（train*）を付与する。
+  `proxy.js` も同じファイルの直近120日分を読んでライブ出馬表に同一特徴量を付ける。
 - 馬柱軸のスコアで当時の予想を再現。戦績集計はレース当日より前のデータのみ（リーク防止）。
 - 出力の各行に分析用フィールドを含む: `surface, distance, baba(馬場状態), race_class(クラス),
   field(頭数), axis_odds, axis_ninki, score_gap, per_bet(券種別損益)`。

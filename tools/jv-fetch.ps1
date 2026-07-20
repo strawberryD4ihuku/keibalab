@@ -1,16 +1,19 @@
-﻿# JV-Link から蓄積系データ(RACE)を取得して生レコードをファイルに書き出す
+﻿# JV-Link から蓄積系データを取得して生レコードをファイルに書き出す
 # 必ず 32bit PowerShell で実行すること:
 #   C:\WINDOWS\SysWOW64\WindowsPowerShell\v1.0\powershell.exe -File tools\jv-fetch.ps1 -From 20260101000000
+#   調教データ: -DataSpec SLOP -Types HC （坂路） / -DataSpec WOOD -Types WC （ウッド）
 #
-# 出力: <OutDir>\RA.txt / SE.txt / HR.txt （1行=1レコード、UTF-8）
+# 出力: <OutDir>\RA.txt / SE.txt / HR.txt など種別ごと（1行=1レコード、UTF-8）
 #       <OutDir>\status.txt に進捗（ポーリング用）
 param(
   [Parameter(Mandatory = $true)][string]$From,   # yyyyMMddHHmmss
   [string]$OutDir = "jvdata",
   [int]$Option = 1,                              # 1=通常 / 4=セットアップ(初回ダイアログ承認済み)
+  [string]$DataSpec = "RACE",                    # JVOpenのデータ種別ID（RACE/SLOP/WOOD等）
   [string]$Types = "RA,SE,HR",                   # 保存するレコード種別
   [string]$SavePath = "C:\work\keibaLab\jvcache",# 生ファイル(.jvd)の保存先（再取得を高速化）
-  [switch]$NoSkip                                # 指定すると不要種別ファイルのJVSkipをしない
+  [switch]$NoSkip,                               # 指定すると不要種別ファイルのJVSkipをしない
+  [switch]$Append                                # 既存の種別ファイルに追記する（差分取得用）
 )
 
 $ErrorActionPreference = 'Stop'
@@ -33,7 +36,7 @@ $writers = @{}
 $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 function Get-Writer([string]$type) {
   if (-not $writers.ContainsKey($type)) {
-    $writers[$type] = New-Object System.IO.StreamWriter((Join-Path $OutDir "$type.txt"), $false, $utf8NoBom)
+    $writers[$type] = New-Object System.IO.StreamWriter((Join-Path $OutDir "$type.txt"), [bool]$Append, $utf8NoBom)
   }
   return $writers[$type]
 }
@@ -59,9 +62,9 @@ try {
   [int]$readCount = 0
   [int]$downloadCount = 0
   [string]$lastTimestamp = (' ' * 20)
-  $openRet = $jv.JVOpen('RACE', $From, $Option, [ref]$readCount, [ref]$downloadCount, [ref]$lastTimestamp)
-  if ($openRet -ne 0) { Write-Status "FAILED JVOpen=$openRet"; exit 1 }
-  Write-Status "OPEN files=$readCount download=$downloadCount last=$lastTimestamp"
+  $openRet = $jv.JVOpen($DataSpec, $From, $Option, [ref]$readCount, [ref]$downloadCount, [ref]$lastTimestamp)
+  if ($openRet -ne 0) { Write-Status "FAILED JVOpen=$openRet spec=$DataSpec"; exit 1 }
+  Write-Status "OPEN spec=$DataSpec files=$readCount download=$downloadCount last=$lastTimestamp"
 
   $filesLog = Join-Path $OutDir 'files.log'
   $total = 0

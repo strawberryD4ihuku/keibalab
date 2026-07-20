@@ -1134,6 +1134,8 @@ const WIN_MODEL_FEATURE_LABELS = {
   classChange: '昇級・降級', layoffLog: '休養日数', secondUp: '叩き2走目',
   gatePosition: '枠位置', runningStyle: '推定脚質',
   gateStyleInteraction: '枠×脚質', courseStyleFit: 'コース×脚質適性',
+  trainCount28: '坂路調教の本数', trainBestSpeed: '坂路最速時計',
+  trainLastGap: '最終追い切りからの日数', trainAccel: '坂路の終い加速',
   form: '近走内容', career: '通算実績', fit: 'コース・距離適性', venueFit: '同競馬場実績',
   agari: '上がり評価', jockey: '騎手成績', kinryo: '斤量',
   marginForm: '着差パフォーマンス', classLevel: '対戦クラス',
@@ -1420,6 +1422,10 @@ async function generateWinValueYoso() {
     runningStyle: h.career?.runningStyle ?? h.runningStyle ?? null,
     gateStyleInteraction: h.career?.gateStyleInteraction ?? h.gateStyleInteraction ?? null,
     courseStyleFit: h.career?.courseStyleFit ?? h.courseStyleFit ?? null,
+    trainCount28: h.career?.trainCount28 ?? h.trainCount28 ?? null,
+    trainBestSpeed: h.career?.trainBestSpeed ?? h.trainBestSpeed ?? null,
+    trainLastGap: h.career?.trainLastGap ?? h.trainLastGap ?? null,
+    trainAccel: h.career?.trainAccel ?? h.trainAccel ?? null,
   }, computeScoreComponents(h)));
   const seq = ++winValueSeq;
   await loadWinModel();

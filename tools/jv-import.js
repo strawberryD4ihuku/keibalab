@@ -13,6 +13,7 @@ const readline = require('readline');
 const iconv = require('iconv-lite');
 const PF = require('../lib/performance-features.js');
 const CF = require('../lib/condition-features.js');
+const TF = require('../lib/training-features.js');
 
 // ---- 引数 ----
 const args = process.argv.slice(2);
@@ -21,6 +22,8 @@ const argOf = (name, def) => {
   return i >= 0 ? args[i + 1] : def;
 };
 const DIR = argOf('--dir', 'jvdata');
+// 坂路調教(HC.txt)の置き場。無ければ調教特徴量は全てnull
+const TRAIN_DIR = argOf('--train-dir', 'jvtrain');
 const MIN_DATE = argOf('--min-date', '0000-00-00');
 const OUT = argOf('--out', path.join(DIR, 'verify_rows.json'));
 // 単勝・期待値判定用の全馬行（レース単位でグループ化）。'none'指定で出力を省略
@@ -157,6 +160,7 @@ async function parseSE() {
       jockeyCode: g(b, 296, 5),
       jockeyName: gz(b, 306, 8).replace(/[\s　]+$/g, ''),
       rank: num(b, 334, 2),                    // 0 = 取消・除外・中止
+      weight: CF.validWeight(num(b, 324, 3)),  // 馬体重kg（999=今計不・000=取消はnull）
       timeSec: raceTimeSeconds(b, 338),         // 走破タイム（秒）
       timeDiffSec: b.length >= 535 ? signedTenths(b, 531, 4) : null, // 1着馬との差（1着は2着へ負値）
       corner1: num(b, 351, 2) || null,
@@ -205,6 +209,19 @@ async function parseHR() {
     if (Object.keys(payouts).length) payoutsByKey.set(key, payouts);
   }
   return payoutsByKey;
+}
+
+// ---- HC: 坂路調教（<TRAIN_DIR>/HC.txt。無ければ調教特徴量は全てnull） ----
+async function loadTrainingStore() {
+  const p = path.join(TRAIN_DIR, 'HC.txt');
+  if (!fs.existsSync(p)) return null;
+  const store = TF.createWorkStore();
+  const rl = readline.createInterface({input: fs.createReadStream(p, {encoding: 'utf8'}), crlfDelay: Infinity});
+  let kept = 0;
+  for await (const line of rl) { if (TF.addLine(store, line)) kept++; }
+  TF.finalize(store);
+  console.log(`HC=${kept}本の坂路調教（${store.minDate}〜${store.maxDate}）`);
+  return store;
 }
 
 // 同じ日より前の走破タイムだけから、コース条件別の速度指数を付与する。
@@ -267,6 +284,7 @@ async function main() {
   const races = await parseRA();
   const seAll = await parseSE();
   const payoutsByKey = await parseHR();
+  const trainStore = await loadTrainingStore();
   console.log(`RA=${races.size}レース SE=${seAll.length}頭走 HR=${payoutsByKey.size}レース分の払戻`);
   attachSpeedFigures(seAll, races);
 
@@ -280,7 +298,7 @@ async function main() {
       date: race.date, rank: e.rank, field: race.field, agari: e.agari,
       surface: race.surface, distance: race.distance, venueCode: race.venueCode,
       raceClass: race.raceClass, classLevel: PF.raceClassLevel(race.raceClass),
-      waku: e.waku, timeSec: e.timeSec, timeDiffSec: e.timeDiffSec,
+      waku: e.waku, weight: e.weight, timeSec: e.timeSec, timeDiffSec: e.timeDiffSec,
       speedFigure: e.speedFigure ?? null,
       corner1: e.corner1, corner2: e.corner2, corner3: e.corner3, corner4: e.corner4,
     };
@@ -341,6 +359,7 @@ async function main() {
         date: race.date, surface: race.surface, distance: race.distance,
         venueCode: race.venueCode, classLevel: PF.raceClassLevel(race.raceClass),
         field: lineup.length, waku: e.waku, maxWaku: Math.max(...lineup.map(x => x.waku || 0)),
+        weight: e.weight,   // 当日馬体重（レース約50分前に発表＝予想時点で利用可）
       });
       const career = {n: 0, w: 0, p3: 0, fitN: 0, fitW: 0, fitP3: 0, venueN: 0, venueP3: 0};
       for (const r of runs) {
@@ -371,6 +390,7 @@ async function main() {
         classLevel: performance.classLevel,
         speedForm: performance.speedForm,
         ...conditions,
+        ...TF.summarizeTraining(trainStore, e.horseId, race.date),
       };
     });
     horses.forEach(h => { h.score = scoring.computeScore(h); });
@@ -419,6 +439,13 @@ async function main() {
             runningStyle: r4(horses[i].runningStyle, 5),
             gateStyleInteraction: r4(horses[i].gateStyleInteraction, 5),
             courseStyleFit: r4(horses[i].courseStyleFit, 5),
+            weightDelta: r4(horses[i].weightDelta, 5),
+            weightAbsDelta: r4(horses[i].weightAbsDelta, 5),
+            weightVsTypical: r4(horses[i].weightVsTypical, 5),
+            trainCount28: r4(horses[i].trainCount28, 5),
+            trainBestSpeed: r4(horses[i].trainBestSpeed, 5),
+            trainLastGap: r4(horses[i].trainLastGap, 5),
+            trainAccel: r4(horses[i].trainAccel, 5),
           };
         }),
         pick: wv.pick ? wv.pick.num : null,

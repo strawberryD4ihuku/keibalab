@@ -11,8 +11,33 @@ const VENUE_CODE = {
 
 const fs = require('fs');
 const path = require('path');
+const readline = require('readline');
 const PF = require('./lib/performance-features.js');
 const CF = require('./lib/condition-features.js');
+const TF = require('./lib/training-features.js');
+
+// 坂路調教（jvtrain/HC.txt）。直近120日分だけメモリに載せ、ファイル更新時に読み直す。
+// 無い・古い場合は調教特徴量が全馬nullになり、モデルは市場ベース挙動へ自然に縮退する
+// （全馬一様な欠損フラグはsoftmaxで打ち消し合うため予測を壊さない）。
+const TRAIN_HC_FILE = path.join(__dirname, 'jvtrain', 'HC.txt');
+let trainCache = {mtime: 0, store: null};
+async function loadTrainStore() {
+  try {
+    const st = fs.statSync(TRAIN_HC_FILE);
+    if (trainCache.store && trainCache.mtime === st.mtimeMs) return trainCache.store;
+    const d = new Date(Date.now() - 120 * 86400000);
+    const cutoff = d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate();
+    const store = TF.createWorkStore();
+    const rl = readline.createInterface({input: fs.createReadStream(TRAIN_HC_FILE, {encoding: 'utf8'}), crlfDelay: Infinity});
+    for await (const line of rl) {
+      if (line.length >= 20 && parseInt(line.slice(12, 20), 10) >= cutoff) TF.addLine(store, line);
+    }
+    TF.finalize(store);
+    trainCache = {mtime: st.mtimeMs, store};
+    console.log(`坂路調教を読み込み: ${store.date.length}本（${store.minDate}〜${store.maxDate}）`);
+    return store;
+  } catch { return null; }
+}
 
 const server = http.createServer(async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -219,10 +244,15 @@ async function fetchRaceData(venue, date, raceNum) {
 // 各馬の戦績ページ（db.netkeiba.com/horse/result/{id}/）を並列取得して集計
 async function mergeCareers(horses, venue, surface, distance, untilTs, raceContext) {
   const targets = horses.filter(h => h.horseId);
+  // netkeibaの馬IDはJRAの血統登録番号と同一なので、坂路調教（HC）とそのまま結合できる
+  const trainStore = await loadTrainStore();
   await mapLimit(targets, 5, async (h) => {
     try {
       const html = await fetchHtml(`https://db.netkeiba.com/horse/result/${h.horseId}/`);
       h.career = parseCareer(html, venue, surface, distance, untilTs, {...raceContext, waku: h.waku});
+      if (h.career && raceContext && raceContext.date) {
+        Object.assign(h.career, TF.summarizeTraining(trainStore, h.horseId, raceContext.date));
+      }
     } catch { h.career = null; }
   });
 }
