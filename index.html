@@ -296,7 +296,7 @@
           </div>
         </details>
         <div style="margin-bottom:8px"><button class="btn-save" id="forward-batch-btn" style="width:auto" onclick="runForwardBatch()">📌 この日の全レースを判定・記録する</button></div>
-        <div style="font-size:11px;color:var(--text3);margin-bottom:10px">※ 発走済みのレースは記録しません。馬券は自動購入されません。</div>
+        <div id="forward-action-note" style="font-size:11px;color:var(--text3);margin-bottom:10px">※ 発走済みのレースは記録しません。馬券は自動購入されません。</div>
         <div id="forward-current" class="axis-desc">開催日を選び、オッズ発売後・レース発走前に上のボタンを押してください。</div>
         <div id="forward-summary" style="margin-top:10px"></div>
       </div>
@@ -729,6 +729,27 @@ function setEntryNotice(msg) {
   }
 }
 
+function updateForwardBatchAvailability() {
+  const btn = document.getElementById('forward-batch-btn');
+  const note = document.getElementById('forward-action-note');
+  if (!btn || !note) return;
+  const date = document.getElementById('race-date').value;
+  const isPast = date && date < fmtDateStr(new Date());
+  const ready = Boolean(date && !isPast && venueInfo.length);
+  btn.disabled = !ready;
+  btn.style.opacity = ready ? '' : '0.5';
+  if (isPast) {
+    btn.textContent = 'この開催日は終了しています';
+    note.textContent = '次の開催日が表示されたら、オッズ発売後・レース発走前に記録できます。';
+  } else if (!venueInfo.length) {
+    btn.textContent = '出馬表の公開を待っています';
+    note.textContent = '開催情報と出馬表が公開されると、このボタンを使えます。';
+  } else {
+    btn.textContent = '📌 この日の全レースを判定・記録する';
+    note.textContent = '※ 発走済みのレースは記録しません。馬券は自動購入されません。';
+  }
+}
+
 // 選択した日に開催中の競馬場だけを選択肢にする
 async function loadVenues() {
   const date = document.getElementById('race-date').value;
@@ -759,6 +780,8 @@ async function loadVenues() {
       venueSel.innerHTML = '';
       setEntryNotice('この日の開催データを取得できませんでした。時間をおいて再度お試しください。');
     }
+  } finally {
+    updateForwardBatchAvailability();
   }
 }
 
@@ -1735,7 +1758,7 @@ function renderForwardSummary() {
   if (!el) return;
   const predictions = forwardEntries(FORWARD_PRED_PREFIX);
   const results = new Map(forwardEntries(FORWARD_RESULT_PREFIX).map(r => [`${r.race_id}:${r.strategy}:${r.model_version}`, r]));
-  if (!predictions.length) { el.innerHTML = '<div class="empty">記録はまだありません。オッズ発売後に上のボタンを押してください。</div>'; return; }
+  if (!predictions.length) { el.innerHTML = '<div class="empty">記録はまだありません。次の開催日のオッズ発売後・レース発走前に記録できます。</div>'; return; }
   const rows = Object.keys(FORWARD_LABELS).map(strategy => {
     const ps = predictions.filter(p => p.strategy === strategy);
     const buys = ps.filter(p => p.decision === 'buy');
@@ -1781,8 +1804,8 @@ async function runForwardBatch() {
     document.getElementById('race-name').value = original.name;
     horses = []; currentRaceId = null; currentRaceSurface = null; currentRaceDistance = null;
     renderTable();
-    btn.disabled = false; btn.style.opacity = ''; btn.textContent = '📌 この日の全レースを判定・記録する';
     forwardBatchRunning = false;
+    updateForwardBatchAvailability();
     renderForwardSummary();
   }
 }
