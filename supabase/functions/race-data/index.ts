@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import WIN_MODEL from "./win-model.json" assert { type: "json" };
+import UPSET_MODEL from "./upset-model.json" assert { type: "json" };
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -128,7 +129,7 @@ serve(async (req) => {
     const date = url.searchParams.get("date") || "";       // YYYY-MM-DD
     const raceNum = parseInt(url.searchParams.get("race_num") || "1");
 
-    if (action !== "kaisai" && action !== "odds" && action !== "result" && action !== "sire" && action !== "jockey" && action !== "win-model" && !date) {
+    if (action !== "kaisai" && action !== "odds" && action !== "result" && action !== "sire" && action !== "jockey" && action !== "win-model" && action !== "upset-model" && !date) {
       return new Response(JSON.stringify({ error: "date は必須です (YYYY-MM-DD)" }), {
         status: 400, headers: { ...CORS, "Content-Type": "application/json" },
       });
@@ -145,6 +146,7 @@ serve(async (req) => {
       : action === "sire" ? await fetchSireStats(url.searchParams.get("horse_id") || "")
       : action === "jockey" ? await fetchJockeyStats(url.searchParams.get("id") || "")
       : action === "win-model" ? {model: WIN_MODEL}
+      : action === "upset-model" ? {model: UPSET_MODEL}
       : await fetchRaceData(venue, date, raceNum);
 
     return new Response(JSON.stringify(result), {

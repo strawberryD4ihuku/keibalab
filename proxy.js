@@ -90,6 +90,8 @@ const server = http.createServer(async (req, res) => {
       result = await fetchJockeyStats(jkId);
     } else if (action === 'win-model') {
       result = readWinModel();
+    } else if (action === 'upset-model') {
+      result = readUpsetModel();
     } else {
       if (!date) throw Object.assign(new Error('date は必須です'), {status: 400});
       result = await fetchRaceData(venue, date, raceNum);
@@ -107,6 +109,12 @@ const server = http.createServer(async (req, res) => {
 // ファイルなし・壊れたJSONは {model: null} → フロントは市場確率へフォールバックする
 function readWinModel() {
   const p = path.join(__dirname, 'models', 'win-model.json');
+  try { return {model: JSON.parse(fs.readFileSync(p, 'utf8'))}; } catch { return {model: null}; }
+}
+
+// 4〜30倍の穴候補専用モデル。任意パスは受け取らず固定ファイルだけを返す。
+function readUpsetModel() {
+  const p = path.join(__dirname, 'models', 'upset-model.json');
   try { return {model: JSON.parse(fs.readFileSync(p, 'utf8'))}; } catch { return {model: null}; }
 }
 

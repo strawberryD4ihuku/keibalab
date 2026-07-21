@@ -310,6 +310,13 @@
         </div>
       </div>
 
+      <div class="card" id="forward-validation-card">
+        <div class="card-title">🧪 前向き検証 <span style="color:var(--text3);font-weight:400;margin-left:4px">（発走前の判定を固定保存し、結果確定後に精算）</span></div>
+        <div style="margin-bottom:10px"><button class="btn-save" id="forward-batch-btn" style="width:auto" onclick="runForwardBatch()">📌 選択日の全レースを発走前登録</button></div>
+        <div id="forward-current" class="axis-desc">出馬表取得後に、安定型・穴型の判定を記録します</div>
+        <div id="forward-summary" style="margin-top:10px"></div>
+      </div>
+
       <!-- 保存した勝ちパターンとの照合（検証ページで⭐保存したものが自動でここに出る） -->
       <div class="card" id="strategy-hint-card" style="display:none">
         <div class="card-title">💡 データ分析の狙い目 <span style="color:var(--text3);font-weight:400;margin-left:4px">（検証ページで⭐保存した勝ちパターンにこのレースが合致）</span></div>
@@ -425,6 +432,9 @@ let currentRaceId = null;
 let currentRaceSurface = null;   // 今回のレースの馬場種別（芝/ダ/障）— 産駒補正に使用
 let currentRaceDistance = null;  // 今回のレースの距離（勝ちパターン照合に使用）
 let currentOddsTime = null;      // 出馬表取得時のオッズ時刻（単勝・期待値判定の表示に使用）
+let currentRaceClass = null;     // 穴候補モデルのレース文脈に使用
+let upsetModel = null;
+let upsetModelLoaded = false;
 
 // ===== 分析（おいしい買い方さがし）と予想ページで共通のビン分け =====
 // 変えると保存済みの勝ちパターンと判定がズレるので注意
@@ -607,6 +617,10 @@ if (/Line\/|FBAN|FBAV|Instagram|Twitter/i.test(navigator.userAgent)) {
 // App init
 function initApp() {
   renderTable();
+  renderForwardSummary();
+  loadForwardLedgerFromSupabase()
+    .then(() => settleForwardLedger())
+    .then(renderForwardSummary).catch(() => {});
   loadKaisai();
   // 過去取り込みのデフォルト期間 = 直近8週間
   const now = new Date();
@@ -782,13 +796,16 @@ async function fetchRaceData() {
     document.getElementById('bet-form').style.display = 'none';
     // 実際のレース名で上書き（サーバーが正しい名前を知っている）
     if (json.race_name) document.getElementById('race-name').value = json.race_name;
+    currentRaceClass = raceClassFromName(json.race_name || document.getElementById('race-name').value);
     const time = selectedRaceTime();
     const oddsNote = json.odds_time ? ` ／ オッズ${json.odds_time.slice(11, 16)}時点` : '';
     status.textContent = `✅ ${horses.length}頭取得（${venue}${raceNum}R${json.race_name ? ' ' + json.race_name : ''}${time ? ' ／ ' + time + '発走' : ''}${oddsNote}）`;
-    enrichHorses(status.textContent);   // 産駒・騎手成績を裏で取得してスコアに反映（表は先に表示済み）
+    await enrichHorses(status.textContent);   // 前向き判定は補足データ取得後に固定する
+    return true;
   } catch (e) {
     status.textContent = `❌ ${e.message}`;
     showToast('データ取得失敗: ' + e.message);
+    return false;
   } finally {
     btn.disabled = false;
     btn.style.opacity = '';
@@ -799,6 +816,7 @@ async function fetchRaceData() {
 async function enrichHorses(baseStatus) {
   await enrichSires(baseStatus);
   await enrichJockeys(baseStatus);
+  await refreshForwardValidation().catch(e => console.warn('前向き検証判定失敗:', e));
 }
 
 // 騎手成績を取得してスコアに反映する（産駒と同じキャッシュ機構）。
@@ -1405,9 +1423,8 @@ async function loadWinModel() {
   return winModel;
 }
 
-async function generateWinValueYoso() {
-  // 各馬の特徴量（スコア構成要素）を付けて評価する
-  const scored = horses.map(h => Object.assign({
+function buildScoredHorses(source = horses) {
+  return source.map(h => Object.assign({
     num: h.num, name: h.name, odds: h.odds,
     marginForm: h.career?.marginForm ?? h.marginForm ?? null,
     classLevel: h.career?.classLevel ?? h.classLevel ?? null,
@@ -1427,6 +1444,283 @@ async function generateWinValueYoso() {
     trainLastGap: h.career?.trainLastGap ?? h.trainLastGap ?? null,
     trainAccel: h.career?.trainAccel ?? h.trainAccel ?? null,
   }, computeScoreComponents(h)));
+}
+
+// ===== 前向き検証（発走前スナップショット → 結果を別レコードで精算） =====
+const FORWARD_PRED_PREFIX = 'klforward:v1:';
+const FORWARD_RESULT_PREFIX = 'klforward-result:v1:';
+const FORWARD_LABELS = {stable: '安定型', upset: '穴EV100', upset_strict: '厳選穴EV110'};
+
+async function loadUpsetModel() {
+  if (upsetModelLoaded) return upsetModel;
+  upsetModelLoaded = true;
+  try {
+    const json = await apiGet({action: 'upset-model'});
+    if (json.model && json.model.adopted === true && Array.isArray(json.model.theta)) upsetModel = json.model;
+  } catch { /* 読み込み失敗時は穴判定を記録しない */ }
+  return upsetModel;
+}
+
+function upsetSigmoid(x) { return x >= 0 ? 1 / (1 + Math.exp(-x)) : Math.exp(x) / (1 + Math.exp(x)); }
+function upsetLogit(p) { const q = Math.max(1e-9, Math.min(1 - 1e-9, p)); return Math.log(q / (1 - q)); }
+function upsetEntropy(ps) {
+  const ok = ps.filter(p => p > 0);
+  return ok.length > 1 ? -ok.reduce((s, p) => s + p * Math.log(p), 0) / Math.log(ok.length) : 0;
+}
+function zValues(values) {
+  const ok = values.filter(v => typeof v === 'number' && isFinite(v));
+  if (!ok.length) return values.map(() => 0);
+  const mean = ok.reduce((a, b) => a + b, 0) / ok.length;
+  const sd = Math.sqrt(ok.reduce((s, v) => s + (v - mean) ** 2, 0) / ok.length);
+  return values.map(v => typeof v !== 'number' || !isFinite(v) || sd < 1e-9 ? 0 : (v - mean) / sd);
+}
+function predictUpsetCandidates(scored, model) {
+  if (!model || !Array.isArray(model.horseFeatures) || !Array.isArray(model.theta)) return [];
+  const feats = model.horseFeatures;
+  const std = standardizeFeaturesInRace(scored, feats);
+  const market = normalizeMarketProbabilities(scored).map(p => p || 0);
+  const order = market.map((p, i) => ({p, i})).sort((a, b) => b.p - a.p);
+  const ranks = new Map(order.map((v, i) => [v.i, i + 1]));
+  const scoreZ = zValues(scored.map(h => Number(h.score)));
+  const cls = String(currentRaceClass || '');
+  const common = {
+    fieldZ: (scored.length - 12) / 4,
+    marketTopProb: order[0]?.p || 0,
+    marketEntropy: upsetEntropy(market),
+    surfaceDirt: currentRaceSurface === 'ダ' ? 1 : 0,
+    surfaceObstacle: currentRaceSurface === '障' ? 1 : 0,
+    distanceZ: ((Number(currentRaceDistance) || 1800) - 1800) / 600,
+    classMaiden: /新馬|未勝利/.test(cls) ? 1 : 0,
+    classConditions: /1勝|2勝|3勝/.test(cls) ? 1 : 0,
+    classGraded: /G1|G2|G3|重賞|リステッド|L/.test(cls) ? 1 : 0,
+  };
+  const out = [];
+  scored.forEach((h, i) => {
+    const odds = Number(h.odds), mp = market[i];
+    if (!(odds >= 4 && odds <= 30 && mp > 0)) return;
+    const values = [
+      ...feats.map(f => std[i].z[f]), ...feats.map(f => std[i].missing[f]),
+      scoreZ[i], common.fieldZ, (Math.log(odds) - Math.log(10)) / 0.7,
+      (ranks.get(i) - 1) / Math.max(1, scored.length - 1),
+      common.marketTopProb, common.marketEntropy, common.surfaceDirt, common.surfaceObstacle,
+      common.distanceZ, common.classMaiden, common.classConditions, common.classGraded,
+    ];
+    let logit = upsetLogit(mp);
+    for (let k = 0; k < values.length; k++) logit += (Number(model.theta[k]) || 0) * values[k];
+    const p = upsetSigmoid(logit);
+    out.push({num: h.num, name: h.name, odds, predictedWinProb: p, expectedRoiPercent: p * odds * 0.95 * 100});
+  });
+  return out.sort((a, b) => b.expectedRoiPercent - a.expectedRoiPercent || b.predictedWinProb - a.predictedWinProb || a.num - b.num);
+}
+
+function forwardKey(prefix, p) { return `${prefix}${p.race_id}:${p.strategy}:${p.model_version}`; }
+function forwardSnapshotKey(p) { return `${p.race_id}:${p.strategy}:${p.model_version}`; }
+function forwardEntries(prefix) {
+  const out = [];
+  for (const key of Object.keys(localStorage)) {
+    if (!key.startsWith(prefix)) continue;
+    try { out.push(JSON.parse(localStorage.getItem(key))); } catch { /* 壊れた行は無視 */ }
+  }
+  return out;
+}
+function storeForwardPrediction(p) {
+  const key = forwardKey(FORWARD_PRED_PREFIX, p);
+  if (!localStorage.getItem(key)) localStorage.setItem(key, JSON.stringify(p));
+  syncForwardPrediction(p).catch(() => {});
+}
+async function syncForwardPrediction(p) {
+  if (!currentUser) return;
+  const row = {
+    snapshot_key: forwardSnapshotKey(p), race_id: p.race_id, strategy: p.strategy,
+    model_version: p.model_version, race_date: p.race_date, venue: p.venue,
+    race_num: p.race_num, race_name: p.race_name,
+    odds_time: p.odds_time, decision: p.decision, bet_type: p.bet_type,
+    picks: p.picks || [], invest: p.invest || 0, horse: p.horse || null,
+    signals: p.signals || {}, recorder: currentUser.id,
+  };
+  const {error} = await sb.from('forward_predictions').insert(row);
+  if (error && !/duplicate key|already exists/i.test(error.message)) console.warn('前向き予測の同期失敗:', error.message);
+}
+async function syncForwardResult(r) {
+  if (!currentUser) return;
+  const row = {snapshot_key: `${r.race_id}:${r.strategy}:${r.model_version}`,
+    race_id: r.race_id, strategy: r.strategy, model_version: r.model_version,
+    decision: r.decision, invest: r.invest, return_amount: r.return_amount,
+    hit: r.hit, recorder: currentUser.id};
+  const {error} = await sb.from('forward_results').insert(row);
+  if (error && !/duplicate key|already exists/i.test(error.message)) console.warn('前向き結果の同期失敗:', error.message);
+}
+async function loadForwardLedgerFromSupabase() {
+  if (!currentUser) return;
+  const [{data: ps, error: pe}, {data: rs, error: re}] = await Promise.all([
+    sb.from('forward_predictions').select('*').order('recorded_at'),
+    sb.from('forward_results').select('*').order('settled_at'),
+  ]);
+  if (pe || re) return;   // マイグレーション未適用時もローカル台帳は動く
+  for (const row of ps || []) {
+    const p = {...row}; delete p.snapshot_key; delete p.recorder;
+    const key = forwardKey(FORWARD_PRED_PREFIX, p);
+    if (!localStorage.getItem(key)) localStorage.setItem(key, JSON.stringify(p));
+  }
+  for (const row of rs || []) {
+    const r = {...row}; delete r.snapshot_key; delete r.recorder;
+    const key = forwardKey(FORWARD_RESULT_PREFIX, r);
+    if (!localStorage.getItem(key)) localStorage.setItem(key, JSON.stringify(r));
+  }
+}
+
+function buildForwardPredictions(scored, oddsTime, betHorses = scored) {
+  const raceDate = document.getElementById('race-date').value;
+  const base = {
+    schema_version: 1, race_id: currentRaceId, race_date: raceDate,
+    venue: document.getElementById('venue').value,
+    race_num: parseInt(document.getElementById('race-num').value),
+    race_name: document.getElementById('race-name').value,
+    recorded_at: new Date().toISOString(), odds_time: oddsTime || null,
+  };
+  const ranked = rankForBet(betHorses, BET_CONFIG['馬連']);
+  const axis = ranked[0] || null;
+  const stablePicks = rankForBet(betHorses, BET_CONFIG['複勝']).slice(0, BET_CONFIG['複勝'].marks.length);
+  const stableCombos = buildCombos('複勝', stablePicks);
+  const stableBuy = betHorses.length <= 9 && axis && Number(axis.odds) >= 1 && Number(axis.odds) < 2;
+  const predictions = [{...base, strategy: 'stable', model_version: 'stable-small-field-favorite-v1',
+    decision: stableBuy ? 'buy' : 'skip', bet_type: '複勝', picks: stableBuy ? stableCombos : [],
+    invest: stableBuy ? stableCombos.length * 100 : 0,
+    signals: {field: betHorses.length, axis_num: axis?.num || null, axis_odds: Number(axis?.odds) || null},
+  }];
+  if (upsetModel) {
+    const candidates = predictUpsetCandidates(scored, upsetModel);
+    for (const [strategy, threshold] of [['upset', Number(upsetModel.threshold) || 100], ['upset_strict', Number(upsetModel.watchCandidate?.threshold) || 110]]) {
+      const pick = candidates.find(x => x.expectedRoiPercent >= threshold) || null;
+      predictions.push({...base, strategy, model_version: upsetModel.version || 'upset-model',
+        decision: pick ? 'buy' : 'skip', bet_type: '単勝', picks: pick ? [[pick.num]] : [], invest: pick ? 100 : 0,
+        horse: pick, signals: {threshold, candidate_count: candidates.length},
+      });
+    }
+  }
+  return predictions;
+}
+
+function renderForwardCurrent(predictions, saved) {
+  const el = document.getElementById('forward-current');
+  if (!el) return;
+  el.innerHTML = predictions.map(p => {
+    const buy = p.decision === 'buy';
+    const detail = p.strategy === 'stable'
+      ? (buy ? `複勝 ${p.picks.map(x => x[0] + '番').join('・')}（${p.invest}円）` : `頭数${p.signals.field}・軸${p.signals.axis_odds ?? '–'}倍`)
+      : (buy ? `${p.horse.num}番 ${esc(p.horse.name)} ${p.horse.odds.toFixed(1)}倍／予測EV ${p.horse.expectedRoiPercent.toFixed(0)}%` : `条件を満たす4〜30倍の馬なし`);
+    return `<div style="margin:5px 0"><strong>${esc(FORWARD_LABELS[p.strategy])}</strong>：<span class="${buy ? 'green' : ''}">${buy ? '買う' : '買わない'}</span>　${detail}</div>`;
+  }).join('') + `<div class="kaime-note">${saved ? 'この発走前判定を固定保存しました。' : '過去レースまたは結果確定済みのため保存していません。'} オッズ時刻: ${esc(predictions[0]?.odds_time || '不明')}</div>`;
+}
+
+async function refreshForwardValidation() {
+  if (!horses.length || !currentRaceId) return;
+  await loadUpsetModel();
+  let liveOdds = null, oddsTime = null;
+  try {
+    const json = await apiGet({action: 'odds', race_id: currentRaceId, bet: '単勝'});
+    liveOdds = json.odds || null; oddsTime = json.official || null;
+  } catch { /* 発売前は記録しない */ }
+  if (!liveOdds) {
+    document.getElementById('forward-current').textContent = '発売中単勝オッズを取得できないため、まだ記録していません';
+    renderForwardSummary();
+    return;
+  }
+  const updated = horses.map(h => {
+    const e = liveOdds[String(h.num)] || liveOdds[String(h.num).padStart(2, '0')];
+    const odds = e && Number(e[0]);
+    return {...h, odds: odds > 0 ? odds : h.odds, score: h.score ?? computeScore(h)};
+  });
+  const scored = buildScoredHorses(updated).map((h, i) => ({...h, score: updated[i].score}));
+  const predictions = buildForwardPredictions(scored, oddsTime, updated);
+  const today = fmtDateStr(new Date());
+  let finished = false;
+  try { finished = Boolean((await apiGet({action: 'result', race_id: currentRaceId})).finished); } catch { /* 未確定扱い */ }
+  const canSave = document.getElementById('race-date').value >= today && !finished;
+  if (canSave) predictions.forEach(storeForwardPrediction);
+  renderForwardCurrent(predictions, canSave);
+  await settleForwardLedger();
+  renderForwardSummary();
+}
+
+async function settleForwardLedger() {
+  const predictions = forwardEntries(FORWARD_PRED_PREFIX).filter(p => !localStorage.getItem(forwardKey(FORWARD_RESULT_PREFIX, p)));
+  const byRace = new Map();
+  for (const p of predictions.slice(0, 60)) {
+    let res = byRace.get(p.race_id);
+    if (!res) {
+      try { res = await apiGet({action: 'result', race_id: p.race_id}); } catch { continue; }
+      byRace.set(p.race_id, res);
+    }
+    if (!res.finished) continue;
+    const ret = p.decision !== 'buy' ? 0 : (p.picks || []).reduce((s, combo) => s + comboPayout(p.bet_type, combo, res.payouts), 0);
+    const result = {race_id: p.race_id, strategy: p.strategy, model_version: p.model_version,
+      settled_at: new Date().toISOString(), decision: p.decision, invest: p.invest || 0,
+      return_amount: ret, hit: ret > 0};
+    localStorage.setItem(forwardKey(FORWARD_RESULT_PREFIX, p), JSON.stringify(result));
+    syncForwardResult(result).catch(() => {});
+  }
+}
+
+function renderForwardSummary() {
+  const el = document.getElementById('forward-summary');
+  if (!el) return;
+  const predictions = forwardEntries(FORWARD_PRED_PREFIX);
+  const results = new Map(forwardEntries(FORWARD_RESULT_PREFIX).map(r => [`${r.race_id}:${r.strategy}:${r.model_version}`, r]));
+  if (!predictions.length) { el.innerHTML = '<div class="empty">前向き記録はまだありません</div>'; return; }
+  const rows = Object.keys(FORWARD_LABELS).map(strategy => {
+    const ps = predictions.filter(p => p.strategy === strategy);
+    const buys = ps.filter(p => p.decision === 'buy');
+    const settled = buys.map(p => results.get(`${p.race_id}:${p.strategy}:${p.model_version}`)).filter(Boolean);
+    const invest = settled.reduce((s, r) => s + r.invest, 0), ret = settled.reduce((s, r) => s + r.return_amount, 0);
+    const hits = settled.filter(r => r.hit).length;
+    return `<tr><td>${esc(FORWARD_LABELS[strategy])}</td><td>${ps.length}</td><td>${buys.length}</td><td>${settled.length}</td><td>${settled.length ? (hits / settled.length * 100).toFixed(1) + '%' : '–'}</td><td>${invest ? (ret / invest * 100).toFixed(1) + '%' : '–'}</td><td>${buys.length - settled.length}</td></tr>`;
+  }).join('');
+  el.innerHTML = `<div class="table-wrap"><table><thead><tr><th>モード</th><th>判定R</th><th>買う</th><th>精算</th><th>的中率</th><th>回収率</th><th>未確定</th></tr></thead><tbody>${rows}</tbody></table></div>
+    <div class="kaime-note">前向き記録はこのブラウザに保存。発走前に一度保存した判定は上書きしません。</div>`;
+}
+
+let forwardBatchRunning = false;
+async function runForwardBatch() {
+  if (forwardBatchRunning) return;
+  const date = document.getElementById('race-date').value;
+  const today = fmtDateStr(new Date());
+  if (!date || date < today) { showToast('今日以降の開催日を選んでください'); return; }
+  const races = [];
+  for (const v of venueInfo || []) for (const r of v.races || []) races.push({venue: v.venue, num: r.num, title: r.title || ''});
+  if (!races.length) { showToast('選択日のレース一覧がありません'); return; }
+  forwardBatchRunning = true;
+  const btn = document.getElementById('forward-batch-btn');
+  const original = {venue: document.getElementById('venue').value, num: document.getElementById('race-num').value, name: document.getElementById('race-name').value};
+  btn.disabled = true; btn.style.opacity = '0.5';
+  const before = forwardEntries(FORWARD_PRED_PREFIX).length;
+  let failed = 0;
+  try {
+    for (let i = 0; i < races.length; i++) {
+      const r = races[i];
+      btn.textContent = `登録中 ${i + 1}/${races.length}（${r.venue}${r.num}R）`;
+      document.getElementById('venue').value = r.venue;
+      document.getElementById('race-num').value = `${r.num}R`;
+      document.getElementById('race-name').value = r.title;
+      if (!await fetchRaceData()) failed++;
+    }
+    const added = forwardEntries(FORWARD_PRED_PREFIX).length - before;
+    showToast(`前向き登録完了：${Math.floor(added / 3)}レース（失敗${failed}）`);
+  } finally {
+    document.getElementById('venue').value = original.venue;
+    document.getElementById('race-num').value = original.num;
+    document.getElementById('race-name').value = original.name;
+    horses = []; currentRaceId = null; currentRaceSurface = null; currentRaceDistance = null;
+    renderTable();
+    btn.disabled = false; btn.style.opacity = ''; btn.textContent = '📌 選択日の全レースを発走前登録';
+    forwardBatchRunning = false;
+    renderForwardSummary();
+  }
+}
+
+async function generateWinValueYoso() {
+  // 各馬の特徴量（スコア構成要素）を付けて評価する
+  const scored = buildScoredHorses();
   const seq = ++winValueSeq;
   await loadWinModel();
   if (seq !== winValueSeq || !horses.length) return;   // 待機中に予想し直されたら破棄
