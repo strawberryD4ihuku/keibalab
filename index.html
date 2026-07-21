@@ -1343,7 +1343,7 @@ function renderTable() {
       <td><span style="color:${sel?'var(--accent)':'var(--text3)'}">●</span></td>
       <td><span class="waku-num" style="background:${wk.bg};color:${wk.fg}">${h.waku}</span></td>
       <td><strong>${h.num}</strong></td>
-      <td style="text-align:left;font-weight:500;white-space:nowrap">${h.horseId ? `<a href="https://db.netkeiba.com/horse/${esc(h.horseId)}/" target="_blank" rel="noopener" class="horse-link" onclick="event.stopPropagation()">${esc(h.name)}</a>` : esc(h.name)}${currentAxis === '血統' && h.sire ? `<div style="font-size:11px;font-weight:400;color:var(--gold)">${h.sireStats?.sire_id ? `<a href="https://db.netkeiba.com/horse/${esc(h.sireStats.sire_id)}/" target="_blank" rel="noopener" class="horse-link" style="color:var(--gold);border-bottom-color:rgba(240,192,64,0.4)" onclick="event.stopPropagation()">${esc(h.sire)}</a>` : esc(h.sire)}産駒</div>` : ''}</td>
+      <td style="text-align:left;font-weight:500;white-space:nowrap">${h.horseId ? `<a href="https://db.netkeiba.com/horse/${esc(h.horseId)}/" target="_blank" rel="noopener" class="horse-link" onclick="event.stopPropagation()">${esc(h.name)}</a>` : esc(h.name)}${h.sire ? `<div style="font-size:11px;font-weight:400;color:var(--gold)">${h.sireStats?.sire_id ? `<a href="https://db.netkeiba.com/horse/${esc(h.sireStats.sire_id)}/" target="_blank" rel="noopener" class="horse-link" style="color:var(--gold);border-bottom-color:rgba(240,192,64,0.4)" onclick="event.stopPropagation()">${esc(h.sire)}</a>` : esc(h.sire)}産駒</div>` : ''}</td>
       <td style="color:var(--text2);white-space:nowrap">${h.jockeyId ? `<a href="https://db.netkeiba.com/jockey/${esc(h.jockeyId)}/" target="_blank" rel="noopener" class="horse-link" style="color:var(--text2)" onclick="event.stopPropagation()">${esc(h.jockey)}</a>` : esc(h.jockey)}</td>
       <td>${fmtRank(h.p1)}</td>
       <td>${fmtRank(h.p2)}</td>
@@ -1971,7 +1971,7 @@ function generateYoso() {
 
   const poolDesc = useSelection ? `選択した${pool.length}頭` : `全${pool.length}頭`;
   const styleNote = cfg.style === 'win' ? '。1着候補重視（勝率を加点）' : cfg.style === 'place' ? '。3着以内の安定感重視（複勝率を加点）' : '';
-  const sireNote = currentAxis === '血統' && top.sire ? `（${top.sire}産駒）` : '';
+  const sireNote = top.sire ? `（${top.sire}産駒）` : '';
   const careerNote = top.career?.n ? `。直近10年${top.career.n}戦${top.career.w}勝${top.career.fitN ? `・同条件複勝${top.career.fitP3}/${top.career.fitN}` : ''}` : '';
   let comment = `データ予想×${betType}${styleNote}（${poolDesc}から）。◎${top.name}${sireNote}が最上位${careerNote}`;
   if (picks[1]) comment += `。○${picks[1].name}が対抗`;
