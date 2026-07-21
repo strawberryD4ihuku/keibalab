@@ -311,9 +311,20 @@
       </div>
 
       <div class="card" id="forward-validation-card">
-        <div class="card-title">🧪 前向き検証 <span style="color:var(--text3);font-weight:400;margin-left:4px">（発走前の判定を固定保存し、結果確定後に精算）</span></div>
-        <div style="margin-bottom:10px"><button class="btn-save" id="forward-batch-btn" style="width:auto" onclick="runForwardBatch()">📌 選択日の全レースを発走前登録</button></div>
-        <div id="forward-current" class="axis-desc">出馬表取得後に、安定型・穴型の判定を記録します</div>
+        <div class="card-title">🧪 買うレース判定 <span style="color:var(--text3);font-weight:400;margin-left:4px">（実戦テスト中）</span></div>
+        <div class="axis-desc" style="line-height:1.8;margin-bottom:12px">
+          選んだ日の全レースを、発売中のオッズで<strong>「買う」「見送る」</strong>に自動分類します。<br>
+          <strong>使い方：</strong>①開催日を選ぶ → ②オッズ発売後・1R発走前に下のボタンを押す → ③レース終了後に開くと成績を自動集計
+        </div>
+        <div style="padding:9px 11px;margin-bottom:12px;border:1px solid var(--border);border-radius:8px;background:var(--bg3);font-size:12px;line-height:1.7">
+          <strong>判定する3つの方針</strong><br>
+          🛡️ <strong>堅実狙い：</strong>当たりやすさを優先して複勝候補を選ぶ<br>
+          🎯 <strong>穴狙い：</strong>オッズ以上に勝つ可能性がある穴馬を選ぶ<br>
+          🔥 <strong>厳選穴狙い：</strong>穴狙いの中でも特に条件がよい馬だけを選ぶ
+        </div>
+        <div style="margin-bottom:8px"><button class="btn-save" id="forward-batch-btn" style="width:auto" onclick="runForwardBatch()">📌 選んだ日の全レースを判定・記録する</button></div>
+        <div style="font-size:11px;color:var(--text3);margin-bottom:10px">※ 判定を記録する機能です。馬券は自動購入されません。</div>
+        <div id="forward-current" class="axis-desc">開催日を選び、オッズ発売後に上のボタンを押してください。</div>
         <div id="forward-summary" style="margin-top:10px"></div>
       </div>
 
@@ -1449,7 +1460,7 @@ function buildScoredHorses(source = horses) {
 // ===== 前向き検証（発走前スナップショット → 結果を別レコードで精算） =====
 const FORWARD_PRED_PREFIX = 'klforward:v1:';
 const FORWARD_RESULT_PREFIX = 'klforward-result:v1:';
-const FORWARD_LABELS = {stable: '安定型', upset: '穴EV100', upset_strict: '厳選穴EV110'};
+const FORWARD_LABELS = {stable: '堅実狙い', upset: '穴狙い', upset_strict: '厳選穴狙い'};
 
 async function loadUpsetModel() {
   if (upsetModelLoaded) return upsetModel;
@@ -1608,8 +1619,8 @@ function renderForwardCurrent(predictions, saved) {
     const buy = p.decision === 'buy';
     const detail = p.strategy === 'stable'
       ? (buy ? `複勝 ${p.picks.map(x => x[0] + '番').join('・')}（${p.invest}円）` : `頭数${p.signals.field}・軸${p.signals.axis_odds ?? '–'}倍`)
-      : (buy ? `${p.horse.num}番 ${esc(p.horse.name)} ${p.horse.odds.toFixed(1)}倍／予測EV ${p.horse.expectedRoiPercent.toFixed(0)}%` : `条件を満たす4〜30倍の馬なし`);
-    return `<div style="margin:5px 0"><strong>${esc(FORWARD_LABELS[p.strategy])}</strong>：<span class="${buy ? 'green' : ''}">${buy ? '買う' : '買わない'}</span>　${detail}</div>`;
+      : (buy ? `単勝 ${p.horse.num}番 ${esc(p.horse.name)}（${p.horse.odds.toFixed(1)}倍）` : `購入条件に合う穴馬なし`);
+    return `<div style="margin:7px 0"><strong>${esc(FORWARD_LABELS[p.strategy])}</strong>：<span class="${buy ? 'green' : ''}">${buy ? '買う' : '見送る'}</span>　${detail}</div>`;
   }).join('') + `<div class="kaime-note">${saved ? 'この発走前判定を固定保存しました。' : '過去レースまたは結果確定済みのため保存していません。'} オッズ時刻: ${esc(predictions[0]?.odds_time || '不明')}</div>`;
 }
 
@@ -1667,7 +1678,7 @@ function renderForwardSummary() {
   if (!el) return;
   const predictions = forwardEntries(FORWARD_PRED_PREFIX);
   const results = new Map(forwardEntries(FORWARD_RESULT_PREFIX).map(r => [`${r.race_id}:${r.strategy}:${r.model_version}`, r]));
-  if (!predictions.length) { el.innerHTML = '<div class="empty">前向き記録はまだありません</div>'; return; }
+  if (!predictions.length) { el.innerHTML = '<div class="empty">記録はまだありません。オッズ発売後に上のボタンを押してください。</div>'; return; }
   const rows = Object.keys(FORWARD_LABELS).map(strategy => {
     const ps = predictions.filter(p => p.strategy === strategy);
     const buys = ps.filter(p => p.decision === 'buy');
@@ -1676,8 +1687,8 @@ function renderForwardSummary() {
     const hits = settled.filter(r => r.hit).length;
     return `<tr><td>${esc(FORWARD_LABELS[strategy])}</td><td>${ps.length}</td><td>${buys.length}</td><td>${settled.length}</td><td>${settled.length ? (hits / settled.length * 100).toFixed(1) + '%' : '–'}</td><td>${invest ? (ret / invest * 100).toFixed(1) + '%' : '–'}</td><td>${buys.length - settled.length}</td></tr>`;
   }).join('');
-  el.innerHTML = `<div class="table-wrap"><table><thead><tr><th>モード</th><th>判定R</th><th>買う</th><th>精算</th><th>的中率</th><th>回収率</th><th>未確定</th></tr></thead><tbody>${rows}</tbody></table></div>
-    <div class="kaime-note">前向き記録はこのブラウザに保存。発走前に一度保存した判定は上書きしません。</div>`;
+  el.innerHTML = `<div style="font-weight:700;margin-bottom:6px">これまでのテスト成績</div><div class="table-wrap"><table><thead><tr><th>方針</th><th>判定したレース</th><th>買い候補</th><th>結果確定</th><th>的中率</th><th>回収率</th><th>結果待ち</th></tr></thead><tbody>${rows}</tbody></table></div>
+    <div class="kaime-note">発走前に保存した判定は、あとから変更しません。結果はレース終了後に自動集計します。</div>`;
 }
 
 let forwardBatchRunning = false;
@@ -1705,14 +1716,14 @@ async function runForwardBatch() {
       if (!await fetchRaceData()) failed++;
     }
     const added = forwardEntries(FORWARD_PRED_PREFIX).length - before;
-    showToast(`前向き登録完了：${Math.floor(added / 3)}レース（失敗${failed}）`);
+    showToast(`判定・記録が完了しました：${Math.floor(added / 3)}レース（読み込み不可 ${failed}レース）`);
   } finally {
     document.getElementById('venue').value = original.venue;
     document.getElementById('race-num').value = original.num;
     document.getElementById('race-name').value = original.name;
     horses = []; currentRaceId = null; currentRaceSurface = null; currentRaceDistance = null;
     renderTable();
-    btn.disabled = false; btn.style.opacity = ''; btn.textContent = '📌 選択日の全レースを発走前登録';
+    btn.disabled = false; btn.style.opacity = ''; btn.textContent = '📌 選んだ日の全レースを判定・記録する';
     forwardBatchRunning = false;
     renderForwardSummary();
   }
