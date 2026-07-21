@@ -66,17 +66,28 @@
   .main { flex: 1; padding: 1.5rem; max-width: 1100px; margin: 0 auto; width: 100%; }
   .page { display: none; }
   .page.active { display: block; }
+  .page-heading { margin: 0 0 1.25rem; }
+  .page-heading h1 { font-size: 22px; line-height: 1.35; margin-bottom: 3px; }
+  .page-heading p { color: var(--text2); font-size: 13px; }
 
   /* Cards */
   .card { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius); padding: 1.25rem; margin-bottom: 1rem; }
-  .card-title { font-size: 13px; font-weight: 500; color: var(--text2); margin-bottom: 1rem; display: flex; align-items: center; gap: 6px; }
+  .card-title { font-size: 15px; font-weight: 700; color: var(--text); margin-bottom: 1rem; display: flex; align-items: center; gap: 8px; }
+  .step-badge { width: 24px; height: 24px; display: inline-flex; align-items: center; justify-content: center; border-radius: 50%; background: rgba(79,142,247,0.18); color: var(--accent); font-size: 12px; flex-shrink: 0; }
+  .section-tag { padding: 2px 8px; border-radius: 100px; background: var(--bg3); color: var(--text2); font-size: 10px; font-weight: 500; }
+  .workflow-card { border-color: rgba(62,207,142,0.3); box-shadow: 0 0 0 1px rgba(62,207,142,0.04); }
+  .workflow-note { font-size: 12px; color: var(--text2); line-height: 1.8; margin-bottom: 12px; }
+  .readonly-field { background: rgba(34,38,58,0.55) !important; color: var(--text2) !important; cursor: default; }
+  .strategy-help { margin: 10px 0 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg3); }
+  .strategy-help summary { padding: 9px 11px; color: var(--text2); font-size: 12px; cursor: pointer; }
+  .strategy-help-body { padding: 0 11px 10px; font-size: 12px; line-height: 1.8; color: var(--text2); }
 
   /* Race selector */
   .race-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
   .field label { font-size: 12px; color: var(--text2); display: block; margin-bottom: 5px; }
   select, input[type=text], input[type=date], input[type=number], input[type=email], input[type=password] {
     width: 100%; background: var(--bg3); border: 1px solid var(--border); border-radius: var(--radius-sm);
-    padding: 8px 10px; color: var(--text); font-size: 13px; outline: none; transition: border 0.15s;
+    min-height: 40px; padding: 8px 10px; color: var(--text); font-size: 13px; outline: none; transition: border 0.15s;
   }
   select:focus, input:focus { border-color: var(--accent); }
 
@@ -190,6 +201,8 @@
     .user-info { display: none; }
     .main { padding: 0.75rem; }
     .card { padding: 0.9rem; }
+    .page-heading { margin: 0.35rem 0 1rem; }
+    .page-heading h1 { font-size: 19px; }
     table { font-size: 12px; }
     th, td { padding: 6px 4px; }
     .waku-num { width: 20px; height: 20px; font-size: 11px; }
@@ -248,28 +261,49 @@
   <div class="main">
     <!-- 予想ページ -->
     <div class="page active" id="page-yoso">
+      <div class="page-heading">
+        <h1>レース予想</h1>
+        <p>開催日を選び、買うレースと見送るレースを記録します。</p>
+      </div>
+
       <div class="card">
-        <div class="card-title">📅 レース選択</div>
+        <div class="card-title"><span class="step-badge">1</span>開催日とレースを選ぶ</div>
         <div class="race-grid">
           <div class="field"><label>日付（開催日のみ）</label><select id="race-date" onchange="loadVenues()"><option value="">読み込み中...</option></select><span style="font-size:10px;color:var(--text3);margin-top:4px">過去7日分と、出馬表公開後の開催日だけ表示</span></div>
           <div class="field"><label>開催場所</label><select id="venue" onchange="applyMainRace()"></select></div>
           <div class="field"><label>レース番号（発走時刻）</label><select id="race-num" onchange="applyRaceSelection()"><option>1R</option><option>2R</option><option>3R</option><option>4R</option><option>5R</option><option>6R</option><option>7R</option><option>8R</option><option>9R</option><option>10R</option><option selected>11R</option><option>12R</option></select></div>
-          <div class="field"><label>レース名</label><input type="text" id="race-name" placeholder="エプソムC G3"></div>
+          <div class="field"><label>レース名（自動表示）</label><input type="text" id="race-name" class="readonly-field" placeholder="レースを選ぶと表示されます" readonly aria-readonly="true"></div>
         </div>
         <div style="margin-top:10px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">
-          <button class="btn-yoso" id="fetch-btn" onclick="fetchRaceData()">🔄 出馬表を取得</button>
+          <button class="btn-yoso" id="fetch-btn" onclick="fetchRaceData()">🔄 選んだレースの出馬表を表示</button>
           <span id="fetch-status" style="font-size:12px;color:var(--text2)"></span>
         </div>
         <div id="entry-notice" class="axis-desc" style="display:none;margin-top:10px;border-left-color:var(--gold);color:var(--gold)"></div>
       </div>
 
-      <div class="card">
-        <div class="card-title">🎯 総合予想</div>
-        <div class="axis-desc" id="axis-desc">近走内容・コース適性・距離適性・騎手・血統・斤量・市場評価を総合して評価します</div>
+      <div class="card workflow-card" id="forward-validation-card">
+        <div class="card-title"><span class="step-badge">2</span>買うレースをまとめて判定 <span class="section-tag">実戦テスト中</span></div>
+        <div class="workflow-note">
+          選んだ日の全レースを、発売中のオッズで<strong>「買う」「見送る」</strong>に自動分類します。<br>
+          <strong>使い方：</strong>①開催日を選ぶ → ②オッズ発売後・レース発走前に下のボタンを押す → ③レース終了後に開くと成績を自動集計
+        </div>
+        <details class="strategy-help">
+          <summary>判定する3つの方針を見る</summary>
+          <div class="strategy-help-body">
+            🛡️ <strong>堅実狙い：</strong>当たりやすさを優先して複勝候補を選ぶ<br>
+            🎯 <strong>穴狙い：</strong>オッズ以上に勝つ可能性がある穴馬を選ぶ<br>
+            🔥 <strong>厳選穴狙い：</strong>穴狙いの中でも特に条件がよい馬だけを選ぶ
+          </div>
+        </details>
+        <div style="margin-bottom:8px"><button class="btn-save" id="forward-batch-btn" style="width:auto" onclick="runForwardBatch()">📌 この日の全レースを判定・記録する</button></div>
+        <div style="font-size:11px;color:var(--text3);margin-bottom:10px">※ 発走済みのレースは記録しません。馬券は自動購入されません。</div>
+        <div id="forward-current" class="axis-desc">開催日を選び、オッズ発売後・レース発走前に上のボタンを押してください。</div>
+        <div id="forward-summary" style="margin-top:10px"></div>
       </div>
 
       <div class="card">
-        <div class="card-title"><span style="white-space:nowrap">📊 馬柱</span> <span style="color:var(--text3);font-weight:400;margin-left:4px">（2頭以上選択すると、その中から予想します）</span></div>
+        <div class="card-title">選んだレースを詳しく予想 <span class="section-tag">任意</span></div>
+        <div class="workflow-note">出馬表を読み込むと、近走・適性・騎手・血統・斤量・オッズをまとめて評価します。馬をチェックすると候補を絞れます。</div>
         <div class="table-wrap">
           <table>
             <thead><tr>
@@ -279,12 +313,12 @@
           </table>
         </div>
         <div class="yoso-actions">
-          <div class="field"><label>買い方</label>
+          <div class="field"><label>券種</label>
             <select id="bet-type" style="width:auto" onchange="if (document.getElementById('yoso-result').style.display !== 'none' && horses.length) generateYoso()">
               <option>単勝</option><option>複勝</option><option selected>馬連</option><option>馬単</option><option>ワイド</option><option>3連複</option><option>3連単</option>
             </select>
           </div>
-          <button class="btn-yoso" onclick="generateYoso()">✨ 予想を出す</button>
+          <button class="btn-yoso" onclick="generateYoso()">✨ この条件で予想する</button>
         </div>
         <div id="yoso-result" style="display:none" class="yoso-result">
           <div class="yoso-mark" id="honmei-label">◎ 本命</div>
@@ -308,24 +342,6 @@
             <button class="btn-save" onclick="saveBet()">💾 収支を記録する</button>
           </div>
         </div>
-      </div>
-
-      <div class="card" id="forward-validation-card">
-        <div class="card-title">🧪 買うレース判定 <span style="color:var(--text3);font-weight:400;margin-left:4px">（実戦テスト中）</span></div>
-        <div class="axis-desc" style="line-height:1.8;margin-bottom:12px">
-          選んだ日の全レースを、発売中のオッズで<strong>「買う」「見送る」</strong>に自動分類します。<br>
-          <strong>使い方：</strong>①開催日を選ぶ → ②オッズ発売後・1R発走前に下のボタンを押す → ③レース終了後に開くと成績を自動集計
-        </div>
-        <div style="padding:9px 11px;margin-bottom:12px;border:1px solid var(--border);border-radius:8px;background:var(--bg3);font-size:12px;line-height:1.7">
-          <strong>判定する3つの方針</strong><br>
-          🛡️ <strong>堅実狙い：</strong>当たりやすさを優先して複勝候補を選ぶ<br>
-          🎯 <strong>穴狙い：</strong>オッズ以上に勝つ可能性がある穴馬を選ぶ<br>
-          🔥 <strong>厳選穴狙い：</strong>穴狙いの中でも特に条件がよい馬だけを選ぶ
-        </div>
-        <div style="margin-bottom:8px"><button class="btn-save" id="forward-batch-btn" style="width:auto" onclick="runForwardBatch()">📌 選んだ日の全レースを判定・記録する</button></div>
-        <div style="font-size:11px;color:var(--text3);margin-bottom:10px">※ 判定を記録する機能です。馬券は自動購入されません。</div>
-        <div id="forward-current" class="axis-desc">開催日を選び、オッズ発売後に上のボタンを押してください。</div>
-        <div id="forward-summary" style="margin-top:10px"></div>
       </div>
 
       <!-- 保存した勝ちパターンとの照合（検証ページで⭐保存したものが自動でここに出る） -->
@@ -794,8 +810,22 @@ function selectedRaceTime() {
   return v?.races?.find(x => x.num === num)?.time || null;
 }
 
+// 前向き記録は必ず発走前に固定する。時刻不明の当日レースは安全側で記録しない。
+function isBeforeSelectedRaceStart(now = new Date()) {
+  const date = document.getElementById('race-date').value;
+  const today = fmtDateStr(now);
+  if (!date || date < today) return false;
+  if (date > today) return true;
+  const time = selectedRaceTime();
+  if (!time) return false;
+  const [hour, minute] = time.split(':').map(Number);
+  const start = new Date(now);
+  start.setHours(hour, minute, 0, 0);
+  return now < start;
+}
+
 // JRAからデータ取得
-async function fetchRaceData() {
+async function fetchRaceData(recordForward = false) {
   const venue = document.getElementById('venue').value;
   const date = document.getElementById('race-date').value;
   const raceNumRaw = document.getElementById('race-num').value; // "10R"
@@ -833,7 +863,7 @@ async function fetchRaceData() {
     const time = selectedRaceTime();
     const oddsNote = json.odds_time ? ` ／ オッズ${json.odds_time.slice(11, 16)}時点` : '';
     status.textContent = `✅ ${horses.length}頭取得（${venue}${raceNum}R${json.race_name ? ' ' + json.race_name : ''}${time ? ' ／ ' + time + '発走' : ''}${oddsNote}）`;
-    await enrichHorses(status.textContent);   // 前向き判定は補足データ取得後に固定する
+    await enrichHorses(status.textContent, recordForward);   // 判定は補足データ取得後に計算する
     return true;
   } catch (e) {
     status.textContent = `❌ ${e.message}`;
@@ -846,10 +876,10 @@ async function fetchRaceData() {
 }
 
 // 産駒成績と騎手成績を順に取得してスコアへ反映（表は先に表示済み）
-async function enrichHorses(baseStatus) {
+async function enrichHorses(baseStatus, recordForward = false) {
   await enrichSires(baseStatus);
   await enrichJockeys(baseStatus);
-  await refreshForwardValidation().catch(e => console.warn('前向き検証判定失敗:', e));
+  await refreshForwardValidation(recordForward).catch(e => console.warn('買うレース判定失敗:', e));
 }
 
 // 騎手成績を取得してスコアに反映する（産駒と同じキャッシュ機構）。
@@ -1267,7 +1297,7 @@ function winModelContributions(pred, model, topN) {
 function renderTable() {
   const tbody = document.getElementById('uma-tbody');
   if (!horses.length) {
-    tbody.innerHTML = '<tr><td colspan="14" class="empty">出走データがありません。「🔄 出馬表を取得」を押して読み込んでください</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="14" class="empty">出走データがありません。上の「選んだレースの出馬表を表示」を押してください。</td></tr>';
     return;
   }
   horses.forEach(h => { h.score = computeScore(h); });
@@ -1634,7 +1664,7 @@ function buildForwardPredictions(scored, oddsTime, betHorses = scored) {
   return predictions;
 }
 
-function renderForwardCurrent(predictions, saved) {
+function renderForwardCurrent(predictions, saved, saveNote) {
   const el = document.getElementById('forward-current');
   if (!el) return;
   el.innerHTML = predictions.map(p => {
@@ -1643,10 +1673,10 @@ function renderForwardCurrent(predictions, saved) {
       ? (buy ? `複勝 ${p.picks.map(x => x[0] + '番').join('・')}（${p.invest}円）` : `頭数${p.signals.field}・軸${p.signals.axis_odds ?? '–'}倍`)
       : (buy ? `単勝 ${p.horse.num}番 ${esc(p.horse.name)}（${p.horse.odds.toFixed(1)}倍）` : `購入条件に合う穴馬なし`);
     return `<div style="margin:7px 0"><strong>${esc(FORWARD_LABELS[p.strategy])}</strong>：<span class="${buy ? 'green' : ''}">${buy ? '買う' : '見送る'}</span>　${detail}</div>`;
-  }).join('') + `<div class="kaime-note">${saved ? 'この発走前判定を固定保存しました。' : '過去レースまたは結果確定済みのため保存していません。'} オッズ時刻: ${esc(predictions[0]?.odds_time || '不明')}</div>`;
+  }).join('') + `<div class="kaime-note">${esc(saveNote || (saved ? 'この発走前判定を固定保存しました。' : '判定結果を表示しています。'))} オッズ時刻: ${esc(predictions[0]?.odds_time || '不明')}</div>`;
 }
 
-async function refreshForwardValidation() {
+async function refreshForwardValidation(recordForward = false) {
   if (!horses.length || !currentRaceId) return;
   await loadUpsetModel();
   let liveOdds = null, oddsTime = null;
@@ -1666,12 +1696,17 @@ async function refreshForwardValidation() {
   });
   const scored = buildScoredHorses(updated).map((h, i) => ({...h, score: updated[i].score}));
   const predictions = buildForwardPredictions(scored, oddsTime, updated);
-  const today = fmtDateStr(new Date());
   let finished = false;
   try { finished = Boolean((await apiGet({action: 'result', race_id: currentRaceId})).finished); } catch { /* 未確定扱い */ }
-  const canSave = document.getElementById('race-date').value >= today && !finished;
-  if (canSave) predictions.forEach(storeForwardPrediction);
-  renderForwardCurrent(predictions, canSave);
+  const canSave = !finished && isBeforeSelectedRaceStart();
+  const saved = recordForward && canSave;
+  if (saved) predictions.forEach(storeForwardPrediction);
+  const saveNote = saved
+    ? 'この発走前判定を固定保存しました。'
+    : recordForward
+      ? '発走済み・結果確定済み、または発走時刻不明のため保存していません。'
+      : '結果の確認表示です。記録する場合は上の緑のボタンを押してください。';
+  renderForwardCurrent(predictions, saved, saveNote);
   await settleForwardLedger();
   renderForwardSummary();
 }
@@ -1726,7 +1761,7 @@ async function runForwardBatch() {
   const btn = document.getElementById('forward-batch-btn');
   const original = {venue: document.getElementById('venue').value, num: document.getElementById('race-num').value, name: document.getElementById('race-name').value};
   btn.disabled = true; btn.style.opacity = '0.5';
-  const before = forwardEntries(FORWARD_PRED_PREFIX).length;
+  const beforeRaceIds = new Set(forwardEntries(FORWARD_PRED_PREFIX).map(p => p.race_id));
   let failed = 0;
   try {
     for (let i = 0; i < races.length; i++) {
@@ -1735,17 +1770,18 @@ async function runForwardBatch() {
       document.getElementById('venue').value = r.venue;
       document.getElementById('race-num').value = `${r.num}R`;
       document.getElementById('race-name').value = r.title;
-      if (!await fetchRaceData()) failed++;
+      if (!await fetchRaceData(true)) failed++;
     }
-    const added = forwardEntries(FORWARD_PRED_PREFIX).length - before;
-    showToast(`判定・記録が完了しました：${Math.floor(added / 3)}レース（読み込み不可 ${failed}レース）`);
+    const addedRaceIds = new Set(forwardEntries(FORWARD_PRED_PREFIX).filter(p => !beforeRaceIds.has(p.race_id)).map(p => p.race_id));
+    const notAdded = Math.max(0, races.length - addedRaceIds.size - failed);
+    showToast(`新規記録 ${addedRaceIds.size}レース（記録済み・発走済み ${notAdded}／読み込み不可 ${failed}）`);
   } finally {
     document.getElementById('venue').value = original.venue;
     document.getElementById('race-num').value = original.num;
     document.getElementById('race-name').value = original.name;
     horses = []; currentRaceId = null; currentRaceSurface = null; currentRaceDistance = null;
     renderTable();
-    btn.disabled = false; btn.style.opacity = ''; btn.textContent = '📌 選んだ日の全レースを判定・記録する';
+    btn.disabled = false; btn.style.opacity = ''; btn.textContent = '📌 この日の全レースを判定・記録する';
     forwardBatchRunning = false;
     renderForwardSummary();
   }
@@ -1813,17 +1849,15 @@ function renderWinValueResult(scored, oddsTime, isLive) {
       + '</div>';
   };
 
-  document.getElementById('honmei-label').textContent = '💰 総合予想・単勝期待値判定';
+  document.getElementById('honmei-label').textContent = '💰 単勝の買い判断';
   const pick = pickH;
   document.getElementById('honmei-area').innerHTML = pick
-    ? `<span class="yoso-tag">◎ ${pick.num}番 ${esc(pick.name)}</span>
+    ? `<span class="yoso-tag">✅ 買う候補　${pick.num}番 ${esc(pick.name)}</span>
        <div style="margin-top:8px;font-size:13px;line-height:2">
-         現在オッズ <strong>${oddsF(pick.odds)}</strong> ／ 推定勝率 <strong>${pct(pick.predictedWinProb)}</strong> ／ 適正オッズ <strong>${oddsF(pick.fairOdds)}</strong><br>
-         安全率考慮後の期待回収率 <strong class="green">${roiF(pick.expectedRoiPercent)}</strong>
-         ／ <strong class="green">判定：購入候補</strong>（単勝1点）
+         現在オッズ <strong>${oddsF(pick.odds)}</strong> ／ <strong class="green">単勝1点の候補です</strong>
        </div>${contribHtml(pick)}`
-    : `<div style="font-size:13px;line-height:1.9">🙅 <strong>このレースは単勝の期待値条件を満たす馬がないため見送りです</strong><br>
-       <span style="color:var(--text2)">安全率考慮後の期待回収率が${th}%以上の馬がいません</span></div>`;
+    : `<div style="font-size:13px;line-height:1.9">🙅 <strong>このレースの単勝は見送ります</strong><br>
+       <span style="color:var(--text2)">現在のオッズでは、買う条件に届く馬がいません。</span></div>`;
   document.getElementById('taikou-label').style.display = 'none';
   document.getElementById('taikou-area').style.display = 'none';
 
@@ -1849,8 +1883,10 @@ function renderWinValueResult(scored, oddsTime, isLive) {
     ? `総合モデル ${esc(winModel.version || '')}（学習 ${esc(winModel.train?.from || '?')}〜${esc(winModel.train?.to || '?')}）`
     : '市場確率ベースの暫定推定';
   document.getElementById('yoso-kaime').innerHTML =
-    `📋 判定根拠（全${sorted.length}頭・期待回収率順）${table}
-     <span class="kaime-note">推定方法：${modelNote} ／ 使用した閾値：期待回収率${th}%以上で購入候補（オッズに安全率×${sf}を適用）／ ${timeNote}</span>`;
+    `<details class="strategy-help"><summary>詳しい判定根拠を見る</summary><div class="strategy-help-body">
+       全${sorted.length}頭を買いやすさの順に表示${table}
+       <span class="kaime-note">推定方法：${modelNote} ／ 内部基準：期待回収率${th}%以上（オッズに安全率×${sf}を適用）／ ${timeNote}</span>
+     </div></details>`;
 
   document.getElementById('yoso-comment').textContent = winModel
     ? '推定勝率は市場オッズを総合モデル（近走・適性・騎手など）で補正した推定値です。オッズは締切まで変動します。回収率を保証するものではありません。'
@@ -1861,7 +1897,7 @@ function renderWinValueResult(scored, oddsTime, isLive) {
 }
 
 function generateYoso() {
-  if (!horses.length) { showToast('先に「出馬表を取得」でデータを読み込んでください'); return; }
+  if (!horses.length) { showToast('先に選んだレースの出馬表を表示してください'); return; }
 
   const betType = document.getElementById('bet-type').value;
   // 単勝は期待値判定方式（推定勝率×オッズで買う/見送るを判断）
@@ -1903,7 +1939,7 @@ function generateYoso() {
   const styleNote = cfg.style === 'win' ? '。1着候補重視（勝率を加点）' : cfg.style === 'place' ? '。3着以内の安定感重視（複勝率を加点）' : '';
   const sireNote = currentAxis === '血統' && top.sire ? `（${top.sire}産駒）` : '';
   const careerNote = top.career?.n ? `。直近10年${top.career.n}戦${top.career.w}勝${top.career.fitN ? `・同条件複勝${top.career.fitP3}/${top.career.fitN}` : ''}` : '';
-  let comment = `総合予想×${betType}${styleNote}（${poolDesc}から）。◎${top.name}${sireNote}が最上位${careerNote}`;
+  let comment = `データ予想×${betType}${styleNote}（${poolDesc}から）。◎${top.name}${sireNote}が最上位${careerNote}`;
   if (picks[1]) comment += `。○${picks[1].name}が対抗`;
   comment += '。';
   document.getElementById('yoso-comment').textContent = comment;
@@ -2326,7 +2362,7 @@ function renderReport(agg, detail, outEl) {
   }
   if (curGroup) html += '</div>';
   html += '</div></details>';
-  html += '<div class="kaime-note" style="display:block;margin-top:10px">※ 直近7日の全レースを対象に、総合予想のスコアによる推奨買い目（1点100円）を全券種で購入した想定。オッズ・払戻は確定値、各馬の戦績集計はレース当日より前のデータのみ使用。検証済みレースはブラウザに保存され、2回目以降は高速に表示されます。</div>';
+  html += '<div class="kaime-note" style="display:block;margin-top:10px">※ 直近7日の全レースを対象に、予想スコアによる買い目（1点100円）を全券種で購入した想定。オッズ・払戻は確定値、各馬の戦績集計はレース当日より前のデータのみ使用。検証済みレースはブラウザに保存され、2回目以降は高速に表示されます。</div>';
   outEl.innerHTML = html;
 }
 
