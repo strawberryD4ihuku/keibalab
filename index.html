@@ -251,7 +251,7 @@
       <div class="card">
         <div class="card-title">📅 レース選択</div>
         <div class="race-grid">
-          <div class="field"><label>日付（開催日のみ）</label><select id="race-date" onchange="loadVenues()"><option value="">読み込み中...</option></select></div>
+          <div class="field"><label>日付（開催日のみ）</label><select id="race-date" onchange="loadVenues()"><option value="">読み込み中...</option></select><span style="font-size:10px;color:var(--text3);margin-top:4px">過去7日分と、出馬表公開後の開催日だけ表示</span></div>
           <div class="field"><label>開催場所</label><select id="venue" onchange="applyMainRace()"></select></div>
           <div class="field"><label>レース番号（発走時刻）</label><select id="race-num" onchange="applyRaceSelection()"><option>1R</option><option>2R</option><option>3R</option><option>4R</option><option>5R</option><option>6R</option><option>7R</option><option>8R</option><option>9R</option><option>10R</option><option selected>11R</option><option>12R</option></select></div>
           <div class="field"><label>レース名</label><input type="text" id="race-name" placeholder="エプソムC G3"></div>
@@ -654,14 +654,36 @@ async function apiGet(params) {
 let kaisaiDates = [];
 let venueInfo = [];
 
-// 開催日プルダウン（今月＋来月の実開催日のみ）
+// 土日・祝日開催の出馬表が揃う目安。対象開催を含む週の金曜11:30から表示する。
+function raceEntryReleaseAt(dateStr) {
+  const target = new Date(dateStr + 'T00:00:00');
+  const daysSinceFriday = (target.getDay() + 2) % 7;
+  const release = new Date(target);
+  release.setDate(target.getDate() - daysSinceFriday);
+  release.setHours(11, 30, 0, 0);
+  return release;
+}
+
+function filterRaceDateOptions(dates, now = new Date()) {
+  const today = fmtDateStr(now);
+  const oldest = new Date(now);
+  oldest.setHours(0, 0, 0, 0);
+  oldest.setDate(oldest.getDate() - 7);
+  const oldestStr = fmtDateStr(oldest);
+  return dates.filter(d => {
+    if (d.date <= today) return d.date >= oldestStr;
+    return now >= raceEntryReleaseAt(d.date);
+  });
+}
+
+// 開催日プルダウン（過去7日＋金曜11:30以降に公開対象となった未来開催日）
 async function loadKaisai() {
   const dateSel = document.getElementById('race-date');
   try {
     const json = await apiGet({action: 'kaisai'});
-    kaisaiDates = json.dates || [];
+    kaisaiDates = filterRaceDateOptions(json.dates || []);
     if (!kaisaiDates.length) throw new Error('開催日が取得できませんでした');
-    const today = new Date().toISOString().split('T')[0];
+    const today = fmtDateStr(new Date());
     // 今日以降の最初の開催日をデフォルトに
     const def = kaisaiDates.find(d => d.date >= today) || kaisaiDates[kaisaiDates.length - 1];
     dateSel.innerHTML = kaisaiDates.map(d => {
