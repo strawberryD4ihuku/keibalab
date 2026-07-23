@@ -9,6 +9,7 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <script src="./lib/race-simulation.js"></script>
+<script src="./lib/course-layout.js"></script>
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
   :root {
@@ -147,12 +148,10 @@
   .pace-btn.active { background: var(--accent); color: #fff; }
   .sim-action { min-height: 40px; width: auto; padding: 7px 14px; }
   .sim-action:disabled, .pace-btn:disabled { cursor: not-allowed; opacity: 0.45; }
-  .sim-stage { position: relative; overflow: hidden; aspect-ratio: 2 / 1; min-height: 220px; border-radius: 18px; background: #174f35; border: 1px solid rgba(255,255,255,0.12); box-shadow: inset 0 0 35px rgba(0,0,0,0.24); }
-  .sim-track { position: absolute; inset: 10%; border: clamp(20px, 5vw, 48px) solid #9c7650; border-radius: 50%; box-shadow: inset 0 0 0 2px rgba(255,255,255,0.2), 0 0 0 2px rgba(255,255,255,0.18); }
-  .sim-track::before { content: ''; position: absolute; inset: -24px; border: 1px dashed rgba(255,255,255,0.5); border-radius: 50%; }
-  .sim-finish { position: absolute; right: 9%; top: 43%; width: 11%; height: 4px; transform: rotate(-8deg); background: repeating-linear-gradient(90deg,#fff 0 6px,#222 6px 12px); z-index: 2; }
+  .sim-stage { position: relative; overflow: hidden; aspect-ratio: 2 / 1; min-height: 260px; border-radius: 18px; background: #174f35; border: 1px solid rgba(255,255,255,0.12); box-shadow: inset 0 0 35px rgba(0,0,0,0.24); }
+  .sim-track-canvas { position:absolute; inset:0; width:100%; height:100%; }
   .sim-marker-layer { position: absolute; inset: 0; }
-  .sim-horse { position: absolute; width: 27px; height: 27px; margin: -13.5px 0 0 -13.5px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 800; border: 2px solid rgba(255,255,255,0.8); box-shadow: 0 2px 7px rgba(0,0,0,0.55); z-index: 4; will-change: left, top; }
+  .sim-horse { position: absolute; width: 22px; height: 22px; margin: -11px 0 0 -11px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 800; border: 1.5px solid rgba(255,255,255,0.9); box-shadow: 0 2px 7px rgba(0,0,0,0.55); z-index: 4; will-change: left, top; }
   .sim-horse.leader { box-shadow: 0 0 0 3px rgba(240,192,64,0.45), 0 2px 7px rgba(0,0,0,0.55); }
   .sim-caption { display: flex; justify-content: space-between; gap: 12px; align-items: center; min-height: 40px; padding: 8px 10px; margin-top: 8px; border-radius: var(--radius-sm); background: var(--bg3); }
   .sim-comment { color: var(--text); font-size: 12px; }
@@ -161,6 +160,9 @@
   .sim-result-chip { display: inline-flex; align-items: center; gap: 5px; padding: 4px 8px; border: 1px solid var(--border); border-radius: 100px; background: var(--bg3); font-size: 11px; }
   .sim-rank { color: var(--gold); font-weight: 700; }
   .sim-empty { color: var(--text3); font-size: 12px; padding: 1rem; text-align: center; }
+  .sim-metrics { display:grid; grid-template-columns:2fr repeat(3,1fr); gap:1px; margin-bottom:8px; overflow:hidden; border-radius:var(--radius-sm); background:var(--border); }
+  .sim-metric { padding:7px 9px; background:var(--bg3); font-size:10px; color:var(--text2); }
+  .sim-metric strong { display:block; color:var(--text); font-size:12px; white-space:nowrap; }
 
   /* Save bet form */
   .bet-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border); }
@@ -252,10 +254,9 @@
     .pace-btn { flex: 1; min-height: 40px; }
     .sim-action { flex: 1; min-width: 88px; }
     .sim-stage { min-height: 190px; aspect-ratio: 1.65 / 1; }
-    .sim-track { inset: 12% 8%; border-width: 27px; }
-    .sim-track::before { inset: -14px; }
-    .sim-horse { width: 24px; height: 24px; margin: -12px 0 0 -12px; font-size: 11px; }
+    .sim-horse { width: 20px; height: 20px; margin: -10px 0 0 -10px; font-size: 9px; }
     .sim-caption { align-items: flex-start; }
+    .sim-metrics { grid-template-columns:1fr 1fr; }
     .toast { left: 12px; right: 12px; bottom: calc(70px + env(safe-area-inset-bottom)); text-align: center; }
   }
 </style>
@@ -364,7 +365,7 @@
           <div class="race-sim-head">
             <div>
               <div class="race-sim-title">🏇 展開シミュレーション <span class="section-tag">お楽しみ</span></div>
-              <div class="race-sim-sub">参考スコアや近走から、位置取りの一例をアニメーションで表示します。着順を保証する予測ではありません。</div>
+              <div class="race-sim-sub">過去5走のコーナー位置から脚質を推定し、競馬場別コース上で展開の一例を表示します。着順を保証する予測ではありません。</div>
             </div>
           </div>
           <div class="race-sim-controls">
@@ -378,9 +379,14 @@
           </div>
           <div id="sim-empty" class="sim-empty">先に出馬表を表示すると、ここで展開を見られます。</div>
           <div id="sim-content" style="display:none">
+            <div class="sim-metrics">
+              <div class="sim-metric">コース<strong id="sim-course-label">—</strong></div>
+              <div class="sim-metric">経過タイム<strong id="sim-clock">0.0秒</strong></div>
+              <div class="sim-metric">残り<strong id="sim-remaining">—</strong></div>
+              <div class="sim-metric">想定走破タイム<strong id="sim-finish-time">—</strong></div>
+            </div>
             <div class="sim-stage" id="sim-stage" aria-label="俯瞰コース上の展開シミュレーション">
-              <div class="sim-track"></div>
-              <div class="sim-finish"></div>
+              <canvas class="sim-track-canvas" id="sim-track-canvas"></canvas>
               <div class="sim-marker-layer" id="sim-marker-layer"></div>
             </div>
             <div class="sim-caption" aria-live="polite">
@@ -547,6 +553,11 @@ let simulationFrame = null;
 let simulationStartedAt = null;
 let simulationElapsed = 0;
 let simulationPlaying = false;
+let simulationCourse = null;
+let simulationPath = null;
+let simulationFinishSeconds = 0;
+let simulationDisplayProgress = new Map();
+let simulationDisplayLane = new Map();
 
 // ===== 分析（おいしい買い方さがし）と予想ページで共通のビン分け =====
 // 変えると保存済みの勝ちパターンと判定がズレるので注意
@@ -1129,7 +1140,7 @@ function prepareRaceSimulation() {
   simulationProgress = 0;
   simulationPlan = [];
 
-  const available = horses.length > 0 && window.RaceSimulation;
+  const available = horses.length > 0 && window.RaceSimulation && window.RaceCourse;
   document.querySelectorAll('.pace-btn').forEach(btn => { btn.disabled = !available; });
   document.getElementById('sim-play').disabled = !available;
   document.getElementById('sim-reset').disabled = !available;
@@ -1138,8 +1149,25 @@ function prepareRaceSimulation() {
   document.getElementById('sim-play').textContent = '▶ 展開を見る';
   if (!available) return;
 
-  const entries = horses.map(h => ({...h, score: computeScore(h)}));
+  const entries = horses.map(h => {
+    const rs = h.career?.runningStyle;
+    const runningStyle = rs == null ? null : rs >= .78 ? '逃げ' : rs >= .55 ? '先行' : rs >= .28 ? '差し' : '追込';
+    return {...h, score: computeScore(h), runningStyle};
+  });
   simulationPlan = RaceSimulation.createPlan(entries, simulationPace);
+  simulationCourse = RaceCourse.getProfile(
+    document.getElementById('venue').value,
+    currentRaceSurface,
+    currentRaceDistance
+  );
+  simulationFinishSeconds = RaceCourse.estimateFinishSeconds(
+    currentRaceDistance,
+    currentRaceSurface,
+    simulationPace,
+    simulationCourse.venue
+  );
+  simulationDisplayProgress = new Map();
+  simulationDisplayLane = new Map();
   const layer = document.getElementById('sim-marker-layer');
   layer.innerHTML = simulationPlan.map(h => {
     const color = WAKU_COLORS[h.waku] || {bg: '#4f8ef7', fg: '#fff'};
@@ -1148,7 +1176,16 @@ function prepareRaceSimulation() {
   document.getElementById('sim-comment').textContent = `${simulationPaceLabel(simulationPace)}想定。ペースを選んで「展開を見る」を押してください。`;
   document.getElementById('sim-phase').textContent = '発走前';
   document.getElementById('sim-result').innerHTML = '';
-  positionSimulationHorses(0);
+  const variant = simulationCourse.variant ? `・${simulationCourse.variant}` : '';
+  document.getElementById('sim-course-label').textContent =
+    `${simulationCourse.venue} ${simulationCourse.surface}${variant}・${simulationCourse.direction === 'left' ? '左' : '右'}回り`;
+  document.getElementById('sim-clock').textContent = '0.0秒';
+  document.getElementById('sim-remaining').textContent = `${currentRaceDistance || '—'}m`;
+  document.getElementById('sim-finish-time').textContent = RaceCourse.formatTime(simulationFinishSeconds) + '目安';
+  requestAnimationFrame(() => {
+    drawSimulationCourse();
+    positionSimulationHorses(0);
+  });
 }
 
 function setSimulationPace(pace) {
@@ -1202,35 +1239,135 @@ function runSimulationFrame(timestamp) {
 
 function positionSimulationHorses(progress) {
   const stage = document.getElementById('sim-stage');
-  if (!stage || !simulationPlan.length) return;
+  if (!stage || !simulationPlan.length || !simulationPath || !simulationCourse) return;
   const width = stage.clientWidth;
   const height = stage.clientHeight;
   if (!width || !height) return;
-  const cx = width * 0.5;
-  const cy = height * 0.5;
   const ranked = RaceSimulation.rankAt(simulationPlan, progress);
   const leaderNum = ranked[0]?.num;
-
-  simulationPlan.forEach((entry, index) => {
-    const marker = document.querySelector(`.sim-horse[data-num="${entry.num}"]`);
-    if (!marker) return;
-    let x, y;
-    if (progress === 0) {
-      const spacing = Math.min(9, height * 0.54 / Math.max(1, simulationPlan.length - 1));
-      x = width * 0.865 - (index % 2) * 7;
-      y = cy + (index - (simulationPlan.length - 1) / 2) * spacing;
-    } else {
-      const horseProgress = RaceSimulation.progressFor(entry, progress);
-      const angle = horseProgress * Math.PI * 2;
-      const laneOffset = (index % 4 - 1.5) * 3;
-      x = cx + (width * 0.36 + laneOffset) * Math.cos(angle);
-      y = cy + (height * 0.31 + laneOffset * 0.35) * Math.sin(angle);
-    }
-    marker.style.left = `${x}px`;
-    marker.style.top = `${y}px`;
-    marker.classList.toggle('leader', entry.num === leaderNum && progress > 0);
+  const distance = Number(currentRaceDistance) || 1600;
+  const leaderProgress = ranked[0]?.raceProgress || 0;
+  let cumulativeGap = 0;
+  const targets = new Map();
+  ranked.forEach((entry, rank) => {
+    if (rank) cumulativeGap += (7 + entry.seed % 5 + (rank % 5 === 0 ? 11 : 0)) * (1.2 - progress * .4);
+    targets.set(entry.num, Math.max(0, leaderProgress - cumulativeGap / distance));
   });
+
+  const placed = [];
+  ranked.forEach((entry, rank) => {
+    const targetProgress = targets.get(entry.num);
+    const oldProgress = simulationDisplayProgress.get(entry.num);
+    const displayProgress = oldProgress == null ? targetProgress : oldProgress + (targetProgress - oldProgress) * .2;
+    simulationDisplayProgress.set(entry.num, displayProgress);
+
+    let laneTarget = (((entry.seed >>> 8) % 7) - 3) / 3;
+    if (progress > .7 && (entry.style === '差し' || entry.style === '追込')) laneTarget += .45;
+    laneTarget = Math.max(-1, Math.min(1, laneTarget));
+    const oldLane = simulationDisplayLane.get(entry.num);
+    const lane = oldLane == null ? laneTarget : oldLane + (laneTarget - oldLane) * .12;
+    simulationDisplayLane.set(entry.num, lane);
+
+    const fraction = simulationCourseFraction(displayProgress);
+    const point = RaceCourse.pointAt(simulationPath, fraction);
+    const maxLane = Math.min(25, Math.max(17, width * .032));
+    const candidates = [lane, -.9, -.45, 0, .45, .9];
+    let best = null;
+    for (let c = 0; c < candidates.length; c++) {
+      const laneValue = candidates[(c + entry.seed) % candidates.length];
+      const backward = c > 3 ? (c - 3) * 8 : 0;
+      const x = point.x + point.nx * laneValue * maxLane - point.tx * backward;
+      const y = point.y + point.ny * laneValue * maxLane - point.ty * backward;
+      const nearest = placed.length ? Math.min(...placed.map(p => Math.hypot(p.x-x,p.y-y))) : 999;
+      if (!best || nearest > best.nearest) best = {x,y,nearest};
+      if (nearest >= 23) break;
+    }
+    placed.push(best);
+    const marker = document.querySelector(`.sim-horse[data-num="${entry.num}"]`);
+    if (marker) {
+      marker.style.left = `${best.x}px`;
+      marker.style.top = `${best.y}px`;
+      marker.classList.toggle('leader', entry.num === leaderNum && progress > 0);
+      marker.style.zIndex = String(20 - rank);
+    }
+  });
+
+  document.getElementById('sim-clock').textContent = RaceCourse.formatTime(simulationFinishSeconds * progress);
+  document.getElementById('sim-remaining').textContent = `${Math.max(0, Math.round(distance * (1-progress) / 10) * 10)}m`;
 }
+
+function simulationCourseFraction(raceProgress) {
+  if (simulationCourse.shape === 'straight') return Math.max(0, Math.min(1, raceProgress));
+  const distance = Number(currentRaceDistance) || 1600;
+  const sign = simulationCourse.direction === 'left' ? -1 : 1;
+  const start = -sign * distance / simulationCourse.lap;
+  return start + sign * raceProgress * distance / simulationCourse.lap;
+}
+
+function drawSimulationCourse() {
+  const canvas = document.getElementById('sim-track-canvas');
+  const stage = document.getElementById('sim-stage');
+  if (!canvas || !stage || !simulationCourse) return;
+  const width = stage.clientWidth, height = stage.clientHeight;
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  canvas.width = Math.round(width * dpr);
+  canvas.height = Math.round(height * dpr);
+  const ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+  ctx.clearRect(0, 0, width, height);
+  simulationPath = RaceCourse.buildPath(simulationCourse, width, height);
+  const trackWidth = Math.min(62, Math.max(44, width * .075));
+
+  const trace = () => {
+    ctx.beginPath();
+    simulationPath.points.forEach((p, i) => i ? ctx.lineTo(p.x,p.y) : ctx.moveTo(p.x,p.y));
+    if (!simulationPath.straight) ctx.closePath();
+  };
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  trace(); ctx.strokeStyle='rgba(0,0,0,.3)'; ctx.lineWidth=trackWidth+8; ctx.stroke();
+  trace(); ctx.strokeStyle=currentRaceSurface==='ダ'?'#8b6745':'#8a704e'; ctx.lineWidth=trackWidth; ctx.stroke();
+  trace(); ctx.strokeStyle='rgba(255,255,255,.22)'; ctx.lineWidth=trackWidth-5; ctx.stroke();
+  trace(); ctx.strokeStyle=currentRaceSurface==='ダ'?'#9c7650':'#947956'; ctx.lineWidth=trackWidth-8; ctx.stroke();
+  ctx.setLineDash([7,9]); trace(); ctx.strokeStyle='rgba(255,255,255,.35)'; ctx.lineWidth=1; ctx.stroke(); ctx.setLineDash([]);
+
+  function drawLineAt(fraction, color, label, length) {
+    const p=RaceCourse.pointAt(simulationPath,fraction), half=length||trackWidth*.58;
+    ctx.beginPath(); ctx.moveTo(p.x-p.nx*half,p.y-p.ny*half); ctx.lineTo(p.x+p.nx*half,p.y+p.ny*half);
+    ctx.strokeStyle=color; ctx.lineWidth=3; ctx.stroke();
+    if (label) {
+      ctx.font='700 10px -apple-system, sans-serif'; ctx.fillStyle='#fff'; ctx.textAlign='center';
+      ctx.fillText(label,p.x+p.nx*(half+12),p.y+p.ny*(half+12)+3);
+    }
+  }
+
+  drawLineAt(0,'#fff','GOAL');
+  drawLineAt(simulationCourseFraction(0),'#72d5ff','START',trackWidth*.48);
+  const maxMarker = Math.min(Number(currentRaceDistance)||1600, simulationCourse.lap)-200;
+  const sign = simulationCourse.direction === 'left' ? -1 : 1;
+  for (let remain=200; remain<=maxMarker; remain+=200) {
+    const fraction = -sign * remain / simulationCourse.lap;
+    const p=RaceCourse.pointAt(simulationPath,fraction);
+    const edge=trackWidth*.62;
+    const bx=p.x+p.nx*edge, by=p.y+p.ny*edge;
+    ctx.beginPath(); ctx.moveTo(bx-p.tx*3,by-p.ty*3); ctx.lineTo(bx+p.nx*9,by+p.ny*9);
+    ctx.strokeStyle=remain%400===0?'#ffdf62':'#fff'; ctx.lineWidth=3; ctx.stroke();
+    ctx.font='700 9px -apple-system, sans-serif'; ctx.fillStyle=remain%400===0?'#ffdf62':'#fff'; ctx.textAlign='center';
+    ctx.fillText(`${remain/200}F`,bx+p.nx*17,by+p.ny*17+3);
+  }
+
+  ctx.font='700 11px -apple-system, sans-serif'; ctx.fillStyle='rgba(255,255,255,.82)'; ctx.textAlign='left';
+  ctx.fillText(`1周 ${Math.round(simulationCourse.lap)}m`,12,18);
+  ctx.fillText(`直線 ${Math.round(simulationCourse.straight)}m`,12,34);
+  ctx.textAlign='right';
+  ctx.fillText(simulationCourse.direction==='left'?'↺ 左回り':'↻ 右回り',width-12,18);
+}
+
+window.addEventListener('resize', () => {
+  if (!simulationPlan.length) return;
+  drawSimulationCourse();
+  positionSimulationHorses(simulationProgress);
+});
 
 function updateSimulationComment(progress) {
   const ranked = RaceSimulation.rankAt(simulationPlan, progress);

@@ -54,6 +54,19 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // ブラウザとNodeで共有する表示ロジックだけを明示的に配信する。
+  // 任意パスを結合せず、許可リストでディレクトリトラバーサルを防ぐ。
+  const browserScripts = {
+    '/lib/race-simulation.js': path.join(__dirname, 'lib', 'race-simulation.js'),
+    '/lib/course-layout.js': path.join(__dirname, 'lib', 'course-layout.js'),
+  };
+  if (browserScripts[url.pathname]) {
+    const script = fs.readFileSync(browserScripts[url.pathname]);
+    res.writeHead(200, {'Content-Type': 'text/javascript; charset=utf-8', 'Cache-Control': 'no-store'});
+    res.end(script);
+    return;
+  }
+
   if (url.pathname !== '/race-data') { res.writeHead(404); res.end('Not found'); return; }
 
   const action = url.searchParams.get('action') || '';
