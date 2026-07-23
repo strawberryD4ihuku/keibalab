@@ -558,6 +558,7 @@ let simulationPath = null;
 let simulationFinishSeconds = 0;
 let simulationDisplayProgress = new Map();
 let simulationDisplayLane = new Map();
+const SIMULATION_DURATION_MS = 20000;
 
 // ===== 分析（おいしい買い方さがし）と予想ページで共通のビン分け =====
 // 変えると保存済みの勝ちパターンと判定がズレるので注意
@@ -1224,7 +1225,7 @@ function runSimulationFrame(timestamp) {
   if (!simulationPlaying) return;
   if (simulationStartedAt == null) simulationStartedAt = timestamp - simulationElapsed;
   simulationElapsed = timestamp - simulationStartedAt;
-  simulationProgress = Math.min(1, simulationElapsed / 14000);
+  simulationProgress = Math.min(1, simulationElapsed / SIMULATION_DURATION_MS);
   positionSimulationHorses(simulationProgress);
   updateSimulationComment(simulationProgress);
   if (simulationProgress >= 1) {
