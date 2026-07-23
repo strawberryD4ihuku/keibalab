@@ -219,9 +219,14 @@
   .bet-horses { font-size: 11px; color: var(--text3); white-space: nowrap; }
   .horse-link { color: var(--text); text-decoration: none; border-bottom: 1px dotted var(--text3); }
   .horse-link:hover { color: var(--accent); border-bottom-color: var(--accent); }
-  .horse-info-links { display: flex; align-items: center; gap: 5px; margin-top: 5px; font-size: 10px; font-weight: 500; }
-  .horse-info-link { display: inline-flex; align-items: center; min-height: 24px; padding: 2px 7px; border: 1px solid var(--border); border-radius: 100px; color: var(--text2); text-decoration: none; background: var(--bg3); }
+  .horse-identity { display: flex; align-items: center; gap: 6px; min-width: max-content; }
+  .horse-sire { color: var(--gold); font-size: 10px; font-weight: 400; }
+  .horse-info-links { display: inline-flex; align-items: center; gap: 4px; font-size: 9px; font-weight: 500; }
+  .horse-info-link { display: inline-flex; align-items: center; min-height: 20px; padding: 1px 6px; border: 1px solid var(--border); border-radius: 100px; color: var(--text2); text-decoration: none; background: var(--bg3); }
   .horse-info-link:hover { color: var(--accent); border-color: var(--accent); }
+  .race-entry-table th { padding: 6px 7px; position: sticky; top: 52px; z-index: 2; }
+  .race-entry-table td { padding: 4px 7px; height: 34px; line-height: 1.25; }
+  .race-entry-table .waku-num { width: 22px; height: 22px; }
   .mobile-swipe-hint { display: none; }
 
   @media (max-width: 640px) {
@@ -247,6 +252,10 @@
     .table-wrap { -webkit-overflow-scrolling: touch; border-radius: var(--radius-sm); }
     table { font-size: 12px; }
     th, td { padding: 6px 4px; }
+    .race-entry-table th { top: 48px; padding: 5px 4px; }
+    .race-entry-table td { padding: 4px; height: 34px; }
+    .horse-identity { gap: 4px; }
+    .horse-info-link { min-height: 22px; padding: 1px 5px; }
     .waku-num { width: 20px; height: 20px; font-size: 11px; }
     .rank-badge { padding: 2px 4px; font-size: 10px; }
     .bet-row { flex-wrap: wrap; }
@@ -341,9 +350,9 @@
         <div class="workflow-note">出馬表を読み込むと、近走・適性・騎手・血統・斤量・オッズをまとめて評価します。馬をチェックすると候補を絞れます。</div>
         <div class="mobile-swipe-hint">← 表は横にスワイプできます →</div>
         <div class="table-wrap">
-          <table>
+          <table class="race-entry-table">
             <thead><tr>
-              <th>選</th><th>枠</th><th>馬番</th><th>馬名</th><th>騎手</th><th>前走</th><th>2走前</th><th>3走前</th><th>4走前</th><th>5走前</th><th>通算<br><span style="font-weight:400">(10年)</span></th><th>上がり3F</th><th>オッズ</th><th>参考スコア</th>
+              <th>選</th><th>枠</th><th>馬番</th><th>馬名・情報</th><th>騎手</th><th>前走</th><th>2走前</th><th>3走前</th><th>通算<br><span style="font-weight:400">(10年)</span></th><th>上がり3F</th><th>オッズ</th><th>参考スコア</th>
             </tr></thead>
             <tbody id="uma-tbody"></tbody>
           </table>
@@ -1821,15 +1830,15 @@ function winModelContributions(pred, model, topN) {
 function horseInfoLinks(h) {
   const newsUrl = `https://news.netkeiba.com/?pid=news_search&keyword=${encodeURIComponent(h.name || '')}`;
   const profile = h.horseId
-    ? `<a href="https://db.netkeiba.com/horse/${esc(h.horseId)}/" target="_blank" rel="noopener" class="horse-info-link" onclick="event.stopPropagation()" aria-label="${esc(h.name)}の戦績と血統を見る">戦績・血統</a>`
+    ? `<a href="https://db.netkeiba.com/horse/${esc(h.horseId)}/" target="_blank" rel="noopener" class="horse-info-link" onclick="event.stopPropagation()" aria-label="${esc(h.name)}の戦績と血統を見る">戦績</a>`
     : '';
-  return `<div class="horse-info-links">${profile}<a href="${esc(newsUrl)}" target="_blank" rel="noopener" class="horse-info-link" onclick="event.stopPropagation()" aria-label="${esc(h.name)}の最新記事を探す">最新記事</a></div>`;
+  return `<span class="horse-info-links">${profile}<a href="${esc(newsUrl)}" target="_blank" rel="noopener" class="horse-info-link" onclick="event.stopPropagation()" aria-label="${esc(h.name)}の最新記事を探す">記事</a></span>`;
 }
 
 function renderTable() {
   const tbody = document.getElementById('uma-tbody');
   if (!horses.length) {
-    tbody.innerHTML = '<tr><td colspan="14" class="empty">出走データがありません。上の「選んだレースの出馬表を表示」を押してください。</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="12" class="empty">出走データがありません。上の「選んだレースの出馬表を表示」を押してください。</td></tr>';
     return;
   }
   horses.forEach(h => { h.score = computeScore(h); });
@@ -1841,14 +1850,12 @@ function renderTable() {
       <td><span style="color:${sel?'var(--accent)':'var(--text3)'}">●</span></td>
       <td><span class="waku-num" style="background:${wk.bg};color:${wk.fg}">${h.waku}</span></td>
       <td><strong>${h.num}</strong></td>
-      <td style="text-align:left;font-weight:500;white-space:nowrap">${h.horseId ? `<a href="https://db.netkeiba.com/horse/${esc(h.horseId)}/" target="_blank" rel="noopener" class="horse-link" onclick="event.stopPropagation()">${esc(h.name)}</a>` : esc(h.name)}${h.sire ? `<div style="font-size:11px;font-weight:400;color:var(--gold)">${h.sireStats?.sire_id ? `<a href="https://db.netkeiba.com/horse/${esc(h.sireStats.sire_id)}/" target="_blank" rel="noopener" class="horse-link" style="color:var(--gold);border-bottom-color:rgba(240,192,64,0.4)" onclick="event.stopPropagation()">${esc(h.sire)}</a>` : esc(h.sire)}産駒</div>` : ''}${horseInfoLinks(h)}</td>
+      <td style="text-align:left;font-weight:500;white-space:nowrap"><div class="horse-identity">${h.horseId ? `<a href="https://db.netkeiba.com/horse/${esc(h.horseId)}/" target="_blank" rel="noopener" class="horse-link" onclick="event.stopPropagation()">${esc(h.name)}</a>` : esc(h.name)}${h.sire ? `<span class="horse-sire">父 ${h.sireStats?.sire_id ? `<a href="https://db.netkeiba.com/horse/${esc(h.sireStats.sire_id)}/" target="_blank" rel="noopener" class="horse-link" style="color:var(--gold);border-bottom-color:rgba(240,192,64,0.4)" onclick="event.stopPropagation()">${esc(h.sire)}</a>` : esc(h.sire)}</span>` : ''}${horseInfoLinks(h)}</div></td>
       <td style="color:var(--text2);white-space:nowrap">${h.jockeyId ? `<a href="https://db.netkeiba.com/jockey/${esc(h.jockeyId)}/" target="_blank" rel="noopener" class="horse-link" style="color:var(--text2)" onclick="event.stopPropagation()">${esc(h.jockey)}</a>` : esc(h.jockey)}</td>
       <td>${fmtRank(h.p1)}</td>
       <td>${fmtRank(h.p2)}</td>
       <td>${fmtRank(h.p3)}</td>
-      <td>${fmtRank(h.p4)}</td>
-      <td>${fmtRank(h.p5)}</td>
-      <td style="white-space:nowrap">${h.career?.n ? `${h.career.n}戦${h.career.w}勝${h.career.fitN ? `<div style="font-size:10px;color:var(--text3)">同条件 ${h.career.fitP3}/${h.career.fitN}</div>` : ''}` : '<span style="color:var(--text3)">–</span>'}</td>
+      <td style="white-space:nowrap">${h.career?.n ? `${h.career.n}戦${h.career.w}勝${h.career.fitN ? ` <span style="font-size:10px;color:var(--text3)">同条件${h.career.fitP3}/${h.career.fitN}</span>` : ''}` : '<span style="color:var(--text3)">–</span>'}</td>
       <td style="color:var(--text2)">${h.age3f ?? '–'}</td>
       <td style="color:var(--accent);font-weight:500;white-space:nowrap">${h.odds ? esc(h.odds)+'倍' : '–'}${h.ninki ? `<span style="color:var(--text3);font-size:11px;font-weight:400"> ${esc(h.ninki)}人気</span>` : ''}</td>
       <td><span class="ai-score ${scoreClass(h.score)}">${h.score}点</span></td>
