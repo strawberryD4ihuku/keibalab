@@ -219,6 +219,9 @@
   .bet-horses { font-size: 11px; color: var(--text3); white-space: nowrap; }
   .horse-link { color: var(--text); text-decoration: none; border-bottom: 1px dotted var(--text3); }
   .horse-link:hover { color: var(--accent); border-bottom-color: var(--accent); }
+  .horse-info-links { display: flex; align-items: center; gap: 5px; margin-top: 5px; font-size: 10px; font-weight: 500; }
+  .horse-info-link { display: inline-flex; align-items: center; min-height: 24px; padding: 2px 7px; border: 1px solid var(--border); border-radius: 100px; color: var(--text2); text-decoration: none; background: var(--bg3); }
+  .horse-info-link:hover { color: var(--accent); border-color: var(--accent); }
   .mobile-swipe-hint { display: none; }
 
   @media (max-width: 640px) {
@@ -1815,6 +1818,14 @@ function winModelContributions(pred, model, topN) {
   };
 }
 
+function horseInfoLinks(h) {
+  const newsUrl = `https://news.netkeiba.com/?pid=news_search&keyword=${encodeURIComponent(h.name || '')}`;
+  const profile = h.horseId
+    ? `<a href="https://db.netkeiba.com/horse/${esc(h.horseId)}/" target="_blank" rel="noopener" class="horse-info-link" onclick="event.stopPropagation()" aria-label="${esc(h.name)}の戦績と血統を見る">戦績・血統</a>`
+    : '';
+  return `<div class="horse-info-links">${profile}<a href="${esc(newsUrl)}" target="_blank" rel="noopener" class="horse-info-link" onclick="event.stopPropagation()" aria-label="${esc(h.name)}の最新記事を探す">最新記事</a></div>`;
+}
+
 function renderTable() {
   const tbody = document.getElementById('uma-tbody');
   if (!horses.length) {
@@ -1830,7 +1841,7 @@ function renderTable() {
       <td><span style="color:${sel?'var(--accent)':'var(--text3)'}">●</span></td>
       <td><span class="waku-num" style="background:${wk.bg};color:${wk.fg}">${h.waku}</span></td>
       <td><strong>${h.num}</strong></td>
-      <td style="text-align:left;font-weight:500;white-space:nowrap">${h.horseId ? `<a href="https://db.netkeiba.com/horse/${esc(h.horseId)}/" target="_blank" rel="noopener" class="horse-link" onclick="event.stopPropagation()">${esc(h.name)}</a>` : esc(h.name)}${h.sire ? `<div style="font-size:11px;font-weight:400;color:var(--gold)">${h.sireStats?.sire_id ? `<a href="https://db.netkeiba.com/horse/${esc(h.sireStats.sire_id)}/" target="_blank" rel="noopener" class="horse-link" style="color:var(--gold);border-bottom-color:rgba(240,192,64,0.4)" onclick="event.stopPropagation()">${esc(h.sire)}</a>` : esc(h.sire)}産駒</div>` : ''}</td>
+      <td style="text-align:left;font-weight:500;white-space:nowrap">${h.horseId ? `<a href="https://db.netkeiba.com/horse/${esc(h.horseId)}/" target="_blank" rel="noopener" class="horse-link" onclick="event.stopPropagation()">${esc(h.name)}</a>` : esc(h.name)}${h.sire ? `<div style="font-size:11px;font-weight:400;color:var(--gold)">${h.sireStats?.sire_id ? `<a href="https://db.netkeiba.com/horse/${esc(h.sireStats.sire_id)}/" target="_blank" rel="noopener" class="horse-link" style="color:var(--gold);border-bottom-color:rgba(240,192,64,0.4)" onclick="event.stopPropagation()">${esc(h.sire)}</a>` : esc(h.sire)}産駒</div>` : ''}${horseInfoLinks(h)}</td>
       <td style="color:var(--text2);white-space:nowrap">${h.jockeyId ? `<a href="https://db.netkeiba.com/jockey/${esc(h.jockeyId)}/" target="_blank" rel="noopener" class="horse-link" style="color:var(--text2)" onclick="event.stopPropagation()">${esc(h.jockey)}</a>` : esc(h.jockey)}</td>
       <td>${fmtRank(h.p1)}</td>
       <td>${fmtRank(h.p2)}</td>
