@@ -229,7 +229,6 @@
     .nav { position: fixed; left: 0; right: 0; bottom: 0; z-index: 150; height: calc(58px + env(safe-area-inset-bottom)); padding-bottom: env(safe-area-inset-bottom); display: grid; grid-template-columns: repeat(4, 1fr); background: rgba(26,29,39,0.97); border-top: 1px solid var(--border2); box-shadow: 0 -4px 18px rgba(0,0,0,0.24); }
     .nav-btn { height: 58px; padding: 0 4px; justify-content: center; white-space: nowrap; font-size: 11px; gap: 2px; border-bottom: 0; border-top: 2px solid transparent; }
     .nav-btn.active { border-bottom-color: transparent; border-top-color: var(--accent); background: rgba(79,142,247,0.07); }
-    .nav-long { display: none; }
     .logout-btn { min-height: 34px; font-size: 11px; padding: 4px 9px; }
     .user-info { display: none; }
     .main { padding: 0.75rem 0.75rem calc(80px + env(safe-area-inset-bottom)); }
@@ -300,8 +299,8 @@
       <div class="logo" onclick="showPage('yoso')" style="cursor:pointer">🏇 KeibaLab</div>
       <nav class="nav">
         <div class="nav-btn active" onclick="showPage('yoso')"><span>📋 予想</span></div>
-        <div class="nav-btn" onclick="showPage('stats')"><span>📊 収支<span class="nav-long">・成績</span></span></div>
-        <div class="nav-btn" onclick="showPage('bets')"><span>📝 <span class="nav-long">購入</span>履歴</span></div>
+        <div class="nav-btn" onclick="showPage('stats')"><span>📊 収支・成績</span></div>
+        <div class="nav-btn" onclick="showPage('bets')"><span>📝 購入履歴</span></div>
         <div class="nav-btn" onclick="showPage('report')"><span>📈 検証</span></div>
       </nav>
     </div>
@@ -316,7 +315,7 @@
     <div class="page active" id="page-yoso">
       <div class="page-heading">
         <h1>レース予想</h1>
-        <p>開催日を選び、買うレースと見送るレースを記録します。</p>
+        <p>レースを一つ選び、出馬表・予想・展開を確認します。</p>
       </div>
 
       <div class="card">
@@ -334,28 +333,8 @@
         <div id="entry-notice" class="axis-desc" style="display:none;margin-top:10px;border-left-color:var(--gold);color:var(--gold)"></div>
       </div>
 
-      <div class="card workflow-card" id="forward-validation-card">
-        <div class="card-title"><span class="step-badge">2</span>買うレースをまとめて判定 <span class="section-tag">実戦テスト中</span></div>
-        <div class="workflow-note">
-          選んだ日の全レースを、発売中のオッズで<strong>「買う」「見送る」</strong>に自動分類します。<br>
-          <strong>使い方：</strong>①開催日を選ぶ → ②オッズ発売後・レース発走前に下のボタンを押す → ③レース終了後に開くと成績を自動集計
-        </div>
-        <details class="strategy-help">
-          <summary>判定する3つの方針を見る</summary>
-          <div class="strategy-help-body">
-            🛡️ <strong>堅実狙い：</strong>当たりやすさを優先して複勝候補を選ぶ<br>
-            🎯 <strong>穴狙い：</strong>オッズ以上に勝つ可能性がある穴馬を選ぶ<br>
-            🔥 <strong>厳選穴狙い：</strong>穴狙いの中でも特に条件がよい馬だけを選ぶ
-          </div>
-        </details>
-        <div style="margin-bottom:8px"><button class="btn-save" id="forward-batch-btn" style="width:auto" onclick="runForwardBatch()">📌 この日の全レースを判定・記録する</button></div>
-        <div id="forward-action-note" style="font-size:11px;color:var(--text3);margin-bottom:10px">※ 発走済みのレースは記録しません。馬券は自動購入されません。</div>
-        <div id="forward-current" class="axis-desc">開催日を選び、オッズ発売後・レース発走前に上のボタンを押してください。</div>
-        <div id="forward-summary" style="margin-top:10px"></div>
-      </div>
-
       <div class="card">
-        <div class="card-title">選んだレースを詳しく予想 <span class="section-tag">任意</span></div>
+        <div class="card-title"><span class="step-badge">2</span>選んだレースを詳しく予想 <span class="section-tag">任意</span></div>
         <div class="workflow-note">出馬表を読み込むと、近走・適性・騎手・血統・斤量・オッズをまとめて評価します。馬をチェックすると候補を絞れます。</div>
         <div class="mobile-swipe-hint">← 表は横にスワイプできます →</div>
         <div class="table-wrap">
@@ -459,6 +438,10 @@
 
     <!-- 収支ページ -->
     <div class="page" id="page-stats">
+      <div class="page-heading">
+        <h1>収支・成績</h1>
+        <p>自分の収支推移と、買い方ごとの成績を確認します。</p>
+      </div>
       <div class="stats-grid" id="my-stats"></div>
       <div class="card">
         <div class="card-title">📈 月別収支（自分・今年）</div>
@@ -476,28 +459,69 @@
 
     <!-- 履歴ページ -->
     <div class="page" id="page-bets">
+      <div class="page-heading">
+        <h1>購入履歴</h1>
+        <p>記録した馬券と結果を時系列で確認します。</p>
+      </div>
       <div class="card">
         <div class="card-title">📝 購入履歴</div>
         <div class="bets-list" id="bets-list"><div class="loading">読み込み中...</div></div>
       </div>
     </div>
 
-    <!-- 検証ページ（今週の成績＋おいしい買い方さがし） -->
+    <!-- 検証ページ（事前判定 → データ追加 → 条件分析） -->
     <div class="page" id="page-report">
+      <div class="page-heading">
+        <h1>検証</h1>
+        <p>事前判定を記録し、過去データを集め、条件ごとの成績を調べます。</p>
+      </div>
+
+      <div class="card workflow-card" id="forward-validation-card">
+        <div class="card-title"><span class="step-badge">1</span>これからのレースを事前判定 <span class="section-tag">前向き検証</span></div>
+        <div class="workflow-note">
+          発売中のオッズで、その日の全レースを<strong>「買う」「見送る」</strong>に判定して固定保存します。レース終了後に実際の結果を集計し、モデルが本番でも通用するか確かめます。
+        </div>
+        <div class="race-grid" style="margin-bottom:10px">
+          <div class="field"><label>判定する開催日</label><select id="forward-date" onchange="changeForwardDate()"><option value="">読み込み中...</option></select></div>
+        </div>
+        <details class="strategy-help">
+          <summary>判定する3つの方針を見る</summary>
+          <div class="strategy-help-body">
+            🛡️ <strong>堅実狙い：</strong>当たりやすさを優先して複勝候補を選ぶ<br>
+            🎯 <strong>穴狙い：</strong>オッズ以上に勝つ可能性がある穴馬を選ぶ<br>
+            🔥 <strong>厳選穴狙い：</strong>穴狙いの中でも特に条件がよい馬だけを選ぶ
+          </div>
+        </details>
+        <div style="margin-bottom:8px"><button class="btn-save" id="forward-batch-btn" style="width:auto" onclick="runForwardBatch()">📌 この日の全レースを判定・記録する</button></div>
+        <div id="forward-action-note" style="font-size:11px;color:var(--text3);margin-bottom:10px">※ 発走済みのレースは記録しません。馬券は自動購入されません。</div>
+        <div id="forward-current" class="axis-desc">開催日を選び、オッズ発売後・レース発走前に上のボタンを押してください。</div>
+        <div id="forward-summary" style="margin-top:10px"></div>
+      </div>
+
       <div class="card">
-        <div class="card-title"><span style="white-space:nowrap">📈 今週のAI成績</span> <span style="color:var(--text3);font-weight:400;margin-left:4px">（直近7日の全レースを、AIの買い目どおり買っていたら？）</span></div>
+        <div class="card-title"><span class="step-badge">2</span>過去レースを検証データに追加 <span class="section-tag">回顧検証</span></div>
+        <div class="workflow-note">直近7日をすぐ集計するか、期間を指定して過去にさかのぼります。どちらも同じ検証データへ保存され、次の条件分析の材料になります。</div>
         <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
-          <button class="btn-yoso" style="width:auto" id="report-btn" onclick="runWeeklyReport()">📊 今週の結果を集計</button>
+          <button class="btn-yoso" style="width:auto" id="report-btn" onclick="runWeeklyReport()">📊 直近7日を取り込む・集計</button>
           <div id="report-progress" class="progress-wrap"><div class="progress-track"><div class="progress-fill"></div></div><span class="progress-label"></span></div>
         </div>
-        <div style="font-size:11px;color:var(--text3);margin-top:6px">初回は数分かかります（1レースずつ予想を再現するため）。集計した結果は自動でためられ、下の「おいしい買い方さがし」の材料になります。</div>
+        <details style="margin-top:10px">
+          <summary style="font-size:12px;color:var(--text2);cursor:pointer">期間を指定して過去にさかのぼる</summary>
+          <div class="race-grid" style="margin-top:8px">
+            <div class="field"><label>開始日</label><input type="date" id="bf-from"></div>
+            <div class="field"><label>終了日</label><input type="date" id="bf-to"></div>
+            <div class="field" style="display:flex;align-items:flex-end"><button class="btn-yoso" style="width:auto" id="bf-btn" onclick="runBackfill()">📥 指定期間を取り込む</button></div>
+          </div>
+        </details>
+        <div style="font-size:11px;color:var(--text3);margin-top:6px">初回は数分かかります。すでに取り込み済みのレースは重複保存しません。</div>
         <div id="report-out" style="margin-top:1rem"></div>
       </div>
 
       <div class="card">
-        <div class="card-title"><span style="white-space:nowrap">💰 おいしい買い方さがし</span> <span style="color:var(--text3);font-weight:400;margin-left:4px">（ためたデータから「この条件のときにこう買うと増えやすい」を探す）</span></div>
+        <div class="card-title"><span class="step-badge">3</span>たまったデータから条件を分析 <span class="section-tag">仮説探索</span></div>
+        <div class="workflow-note">過去データを条件別に分け、成績がよかった買い方の候補を探します。ここで見つけた候補は確定ルールではなく、上の前向き検証で改めて確かめます。</div>
         <div style="display:flex;align-items:flex-end;gap:10px;flex-wrap:wrap">
-          <button class="btn-save" style="width:auto" id="grid-btn" onclick="runGridSearch()">💰 おいしい買い方をさがす</button>
+          <button class="btn-save" style="width:auto" id="grid-btn" onclick="runGridSearch()">🔎 条件別の成績を分析</button>
           <div class="field" style="width:150px"><label>最低レース数（少ないとマグレが混ざります）</label><input type="number" id="grid-minn" value="50" min="5" step="5"></div>
           <div class="field" style="width:150px"><label>対象期間（昔の傾向が今も続くとは限りません）</label>
             <select id="grid-period">
@@ -508,18 +532,10 @@
               <option value="1">直近1年</option>
             </select>
           </div>
-          <div id="strategy-progress" class="progress-wrap"><div class="progress-track"><div class="progress-fill"></div></div><span class="progress-label"></span></div>
+          <div id="grid-progress" class="progress-wrap"><div class="progress-track"><div class="progress-fill"></div></div><span class="progress-label"></span></div>
         </div>
         <div id="strategy-stats" style="font-size:11px;color:var(--text3);margin-top:6px"></div>
         <div id="saved-strategies"></div>
-        <details style="margin-top:8px">
-          <summary style="font-size:12px;color:var(--text2);cursor:pointer">過去の開催分をさかのぼって取り込む（データが取れる期間のみ）</summary>
-          <div class="race-grid" style="margin-top:8px">
-            <div class="field"><label>開始日</label><input type="date" id="bf-from"></div>
-            <div class="field"><label>終了日</label><input type="date" id="bf-to"></div>
-            <div class="field" style="display:flex;align-items:flex-end"><button class="btn-yoso" style="width:auto" id="bf-btn" onclick="runBackfill()">📥 取り込む</button></div>
-          </div>
-        </details>
         <div id="strategy-out" style="margin-top:0.5rem"></div>
       </div>
     </div>
@@ -584,7 +600,7 @@ const SIMULATION_DURATION_MS = 20000;
 let simulationWeather = 'sunny';
 let simulationTrackCondition = '良';
 
-// ===== 分析（おいしい買い方さがし）と予想ページで共通のビン分け =====
+// ===== 条件別の成績分析と予想ページで共通のビン分け =====
 // 変えると保存済みの勝ちパターンと判定がズレるので注意
 const ODDS_BAND = v => v == null ? null : v < 2 ? '〜1.9' : v < 3.5 ? '2.0〜3.4' : v < 7 ? '3.5〜6.9' : v < 15 ? '7.0〜14.9' : '15.0〜';
 const FIELD_BAND = n => n == null ? null : n <= 9 ? '〜9頭' : n <= 13 ? '10〜13頭' : '14頭〜';
@@ -828,11 +844,36 @@ async function loadKaisai() {
       const label = `${dt.getMonth()+1}/${dt.getDate()}(${'日月火水木金土'[dt.getDay()]}) ${d.venues.join('・')}${d.graded.length ? ' ★' + d.graded.join('・') : ''}`;
       return `<option value="${d.date}" ${d === def ? 'selected' : ''}>${esc(label)}</option>`;
     }).join('');
+    syncForwardDateOptions();
     await loadVenues();
   } catch (e) {
     dateSel.innerHTML = '<option value="">取得失敗</option>';
+    syncForwardDateOptions();
     showToast('開催日の取得失敗: ' + e.message);
   }
+}
+
+function syncForwardDateOptions() {
+  const source = document.getElementById('race-date');
+  const target = document.getElementById('forward-date');
+  if (!source || !target) return;
+  const selected = source.value;
+  target.innerHTML = source.innerHTML;
+  target.value = selected;
+}
+
+function selectedForwardDate() {
+  return document.getElementById('forward-date')?.value
+    || document.getElementById('race-date')?.value
+    || '';
+}
+
+async function changeForwardDate() {
+  const date = document.getElementById('forward-date')?.value || '';
+  const mainDate = document.getElementById('race-date');
+  if (!date || !mainDate) return;
+  mainDate.value = date;
+  await loadVenues();
 }
 
 // 出馬表の公開状況を知らせる（開催予定はカレンダーで分かるが、
@@ -854,7 +895,7 @@ function updateForwardBatchAvailability() {
   const btn = document.getElementById('forward-batch-btn');
   const note = document.getElementById('forward-action-note');
   if (!btn || !note) return;
-  const date = document.getElementById('race-date').value;
+  const date = selectedForwardDate();
   const isPast = date && date < fmtDateStr(new Date());
   const ready = Boolean(date && !isPast && venueInfo.length);
   btn.disabled = !ready;
@@ -876,6 +917,8 @@ async function loadVenues() {
   const date = document.getElementById('race-date').value;
   const venueSel = document.getElementById('venue');
   if (!date) return;
+  const forwardDate = document.getElementById('forward-date');
+  if (forwardDate && forwardDate.value !== date) forwardDate.value = date;
   venueSel.innerHTML = '<option value="">読み込み中...</option>';
   try {
     const json = await apiGet({action: 'venues', date});
@@ -1146,7 +1189,13 @@ function showPage(page) {
   document.querySelectorAll('.nav-btn')[idx].classList.add('active');
   if (page === 'stats') loadStats();
   if (page === 'bets') loadBets();
-  if (page === 'report') { loadStrategyStats(); renderSavedStrategies(); }
+  if (page === 'report') {
+    syncForwardDateOptions();
+    updateForwardBatchAvailability();
+    settleForwardLedger().then(renderForwardSummary);
+    loadStrategyStats();
+    renderSavedStrategies();
+  }
 }
 
 // ===== 展開シミュレーション（娯楽用） =====
@@ -2216,7 +2265,7 @@ function renderForwardSummary() {
 let forwardBatchRunning = false;
 async function runForwardBatch() {
   if (forwardBatchRunning) return;
-  const date = document.getElementById('race-date').value;
+  const date = selectedForwardDate();
   const today = fmtDateStr(new Date());
   if (!date || date < today) { showToast('今日以降の開催日を選んでください'); return; }
   const races = [];
@@ -2897,7 +2946,7 @@ async function runBackfill() {
   if (!fromStr || !toStr || fromStr > toStr) { showToast('期間を正しく指定してください'); return; }
   backfillRunning = true;
   const btn = document.getElementById('bf-btn');
-  const progId = 'strategy-progress';
+  const progId = 'report-progress';
   btn.disabled = true;
   btn.style.opacity = '0.5';
   try {
@@ -3080,7 +3129,7 @@ async function runGridSearch() {
   if (gridRunning) return;
   gridRunning = true;
   const btn = document.getElementById('grid-btn');
-  const progId = 'strategy-progress';
+  const progId = 'grid-progress';
   const outEl = document.getElementById('strategy-out');
   btn.disabled = true;
   btn.style.opacity = '0.5';
