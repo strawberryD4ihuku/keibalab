@@ -523,7 +523,11 @@
         <div class="workflow-note">全員共通の検証データから結果を自動表示します。条件を変えたいときだけ再分析してください。見つかった候補は確定ルールではなく、上の事前判定で改めて確かめます。</div>
         <div style="display:flex;align-items:flex-end;gap:10px;flex-wrap:wrap">
           <button class="btn-save" style="width:auto" id="grid-btn" onclick="runGridSearch()">🔄 条件を変えて再分析</button>
-          <div class="field" style="width:150px"><label>最低レース数（少ないとマグレが混ざります）</label><input type="number" id="grid-minn" value="50" min="5" step="5"></div>
+          <div class="field" style="width:190px">
+            <label>基本の最低レース数（200以上を推奨）</label>
+            <input type="number" id="grid-minn" value="200" min="30" step="50">
+            <span style="font-size:10px;color:var(--text3);margin-top:4px">配当のブレが大きい券種は、さらに多い件数を自動で必要とします</span>
+          </div>
           <div class="field" style="width:150px"><label>対象期間（昔の傾向が今も続くとは限りません）</label>
             <select id="grid-period">
               <option value="all">全期間</option>
@@ -3078,6 +3082,7 @@ function gridSearch(records, minN) {
     for (let j = i + 1; j < axisNames.length; j++) condSets.push([axisNames[i], axisNames[j]]);
 
   const segs = new Map();
+  const betMinRaces = {'単勝': 200, '複勝': 200, 'ワイド': 200, '馬連': 200, '馬単': 300, '3連複': 500, '3連単': 1000};
   for (const rec of records) {
     const vals = {};
     for (const a of axisNames) vals[a] = AXES[a](rec);
@@ -3101,7 +3106,8 @@ function gridSearch(records, minN) {
 
   const out = [];
   for (const s of segs.values()) {
-    if (s.n < minN || !s.invest) continue;
+    const requiredN = Math.max(minN, betMinRaces[s.bet] || 200);
+    if (s.n < requiredN || !s.invest) continue;
     const R = s.ret / s.invest;
     // 「統計的下限」= 回収率（払戻合計÷投資合計）の分散をデルタ法で見積もった5%下限。
     // 旧実装のブートストラップと同等の値を、レース配列を持たずに出す。
@@ -3114,6 +3120,7 @@ function gridSearch(records, minN) {
       roi: R * 100,
       hitRate: s.hits / s.n * 100,
       roiLower: Math.max(0, lower * 100),
+      requiredN,
       baseline: s.conds.length === 0,
     });
   }
@@ -3189,7 +3196,7 @@ async function runGridSearch() {
       outEl.innerHTML = '<div class="empty">この期間のデータがありません。期間を広げてみてください</div>';
       return;
     }
-    const minN = Math.max(5, parseInt(document.getElementById('grid-minn').value) || 50);
+    const minN = Math.max(30, parseInt(document.getElementById('grid-minn').value) || 200);
     setProgressBar(progId, 60, `${records.length}レース分から「いつ・何を買うと増えるか」を調べています...`);
     await new Promise(r => setTimeout(r, 30));   // 進捗表示を反映させる
     const {results, g1, g2} = gridSearch(records, minN);
@@ -3214,7 +3221,7 @@ function renderGridSearch(segs, total, minN, outEl) {
 
   const table = (rows, emptyMsg) => {
     if (!rows.length) return `<div class="empty">${emptyMsg}</div>`;
-    let h = '<div class="table-wrap"><table><thead><tr><th>いつ買うか（条件）</th><th>何を買うか</th><th>レース数</th><th>的中率</th><th>回収率</th><th>統計的下限<br><span style="font-weight:400">(探索バイアス<br>未補正)</span></th><th>予想で<br>使う</th></tr></thead><tbody>';
+    let h = '<div class="table-wrap"><table><thead><tr><th>いつ買うか（条件）</th><th>何を買うか</th><th>レース数</th><th>的中率</th><th>回収率</th><th>ブレを考えた目安<br><span style="font-weight:400">(低めに見積もった回収率)</span></th><th>予想で<br>使う</th></tr></thead><tbody>';
     for (const s of rows) {
       h += `<tr${s.roi >= 110 ? ' style="background:rgba(62,207,142,0.06)"' : ''}>
         <td style="text-align:left">${s.roiLower >= 110 ? '🏆 ' : ''}${esc(condText(s.conds))}</td>
@@ -3232,11 +3239,11 @@ function renderGridSearch(segs, total, minN, outEl) {
   let html = '';
   if (champions.length) {
     const c = champions[0];
-    html += `<div class="yoso-kaime" style="margin:1rem 0">🏆 増える可能性が高い買い方が ${champions.length} 件！ 一番手は「${esc(condText(c.conds))}」のとき ${esc(BET_ACTION[c.bet] || c.bet)} を買う → 100円が平均${Math.round(c.roi)}円に</div>`;
+    html += `<div class="yoso-kaime" style="margin:1rem 0">🏆 注目候補が ${champions.length} 件あります。一番手は「${esc(condText(c.conds))}」のとき ${esc(BET_ACTION[c.bet] || c.bet)} を買う → 100円が平均${Math.round(c.roi)}円に</div>`;
   } else if (winners.length) {
     html += `<div class="yoso-kaime" style="margin:1rem 0">100円が110円以上になる買い方が ${winners.length} 件見つかりました。ただしレース数が少なく「たまたま」の可能性も。毎週集計してデータが増えると信頼度が上がります</div>`;
   } else {
-    html += `<div class="axis-desc" style="margin:1rem 0">今のところ「買えば増える」条件（100円が110円以上）は見つかっていません。毎週集計してデータをためるほど見つかる可能性が上がります。最低レース数を下げると傾向だけは観察できます</div>`;
+    html += `<div class="axis-desc" style="margin:1rem 0">今のところ「買えば増える」条件（100円が110円以上）は見つかっていません。データが増えると判断しやすくなります。最低レース数を下げる場合は、参考傾向として見てください。</div>`;
   }
   html += `<details class="report-details" open style="margin-top:1rem"><summary class="report-toggle">くわしい表を見る（クリックで開閉）</summary><div style="margin-top:8px">`;
   html += `<div class="card-title">💰 増える候補（100円が110円以上・${minN}レース以上）</div>`;
@@ -3246,7 +3253,7 @@ function renderGridSearch(segs, total, minN, outEl) {
   html += `<div class="card-title" style="margin-top:1.25rem">くらべる用：条件をつけず全レース買った場合</div>`;
   html += table(baselines, 'データ不足');
   html += '</div></details>';
-  html += `<div class="kaime-note" style="display:block;margin-top:10px">※ ${lastGrid ? esc(lastGrid.periodLabel) + '（' + esc(lastGrid.from) + '〜' + esc(lastGrid.to) + '）の' : 'ためた'}${total}レースから「条件×買い方」を総当たりで集計。回収率=賭けた金額に対して戻ってきた金額の割合（100%より上なら増えている）。「統計的下限」は同一データ内の回収率のばらつきから見積もった5%下限（多数の条件を探索して良かったものを選ぶこと自体のバイアスは補正していない）。気に入った行は「⭐ 使う」で保存すると、予想ページで条件に合うレースのときに自動で教えてくれます。<br>⚠️ <strong>この表は同じ期間のデータで条件探索と評価を行っているため参考値です。</strong>ここで回収率110%が出ても将来の成績を保証するものではありません。また最低50レース程度では、3連単など高配当券種の評価にはレース数が少なすぎます。</div>`;
+  html += `<div class="kaime-note" style="display:block;margin-top:10px">※ ${lastGrid ? esc(lastGrid.periodLabel) + '（' + esc(lastGrid.from) + '〜' + esc(lastGrid.to) + '）の' : 'ためた'}${total}レースから「条件×買い方」を集計。回収率は、賭けた金額に対して戻った金額の割合です。「ブレを考えた目安」は、今の好成績がたまたま高く見えている可能性を考えて、回収率を低めに見積もった数字です。単勝・複勝・ワイド・馬連は200、馬単は300、3連複は500、3連単は1000レースを最低基準として自動適用します。<br>⚠️ <strong>たくさんの条件から成績のよいものを探しているため、この目安も将来の利益を保証しません。</strong>候補は今後のレースで確かめてください。</div>`;
   outEl.innerHTML = html;
 }
 
@@ -3346,7 +3353,7 @@ function updateStrategyHints() {
   document.getElementById('strategy-hint').innerHTML = matched.map(({s, unknown, kaime}) =>
     `<div class="yoso-kaime" style="margin-bottom:8px">🏆 このレースは「<strong>${esc(condText(s.conds))}</strong>」に合致
       ${unknown.length ? `<span class="kaime-note">（※当日の${unknown.map(c => `${esc(c.axis)}が「${esc(condText([c]))}」`).join('・')}なら）</span>` : ''}
-      <br>過去${s.n}レースで回収率${s.roi}%（統計的下限${s.roiLower}%・${esc(s.period || '')}・同一データ内での探索結果のため参考値）
+      <br>過去${s.n}レースで回収率${s.roi}%（ブレを考えた目安${s.roiLower}%・${esc(s.period || '')}・過去データから見つけた参考候補）
       <br>💡 ${kaime}</div>`).join('');
 }
 
