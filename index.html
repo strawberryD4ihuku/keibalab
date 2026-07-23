@@ -224,8 +224,8 @@
   .horse-info-links { display: inline-flex; align-items: center; gap: 4px; font-size: 9px; font-weight: 500; }
   .horse-info-link { display: inline-flex; align-items: center; min-height: 20px; padding: 1px 6px; border: 1px solid var(--border); border-radius: 100px; color: var(--text2); text-decoration: none; background: var(--bg3); }
   .horse-info-link:hover { color: var(--accent); border-color: var(--accent); }
-  .race-entry-table th { padding: 6px 7px; }
-  .race-entry-table td { padding: 4px 7px; height: 34px; line-height: 1.25; }
+  .race-entry-table th { padding: 6px; }
+  .race-entry-table td { padding: 4px 6px; height: 34px; line-height: 1.25; }
   .race-entry-table .waku-num { width: 22px; height: 22px; }
   .race-entry-table th:nth-child(1), .race-entry-table td:nth-child(1) { position: sticky; left: 0; width: 48px; min-width: 48px; }
   .race-entry-table th:nth-child(2), .race-entry-table td:nth-child(2) { position: sticky; left: 48px; width: 36px; min-width: 36px; }
@@ -1850,6 +1850,7 @@ function horseInfoLinks(h) {
 }
 
 const HORSE_MARK_OPTIONS = ['', '◎', '○', '▲', '△', '☆'];
+const HORSE_MARK_LABELS = {'○': '◯'};
 function horseMarkStorageKey() {
   const user = currentUser?.id || 'local';
   const race = currentRaceId || [
@@ -1894,7 +1895,7 @@ function renderTable() {
     const mark = horseMarks[h.num] || '';
     const sel = Boolean(mark);
     const markOptions = HORSE_MARK_OPTIONS.map(value =>
-      `<option value="${value}" ${mark === value ? 'selected' : ''}>${value || '—'}</option>`).join('');
+      `<option value="${value}" ${mark === value ? 'selected' : ''}>${HORSE_MARK_LABELS[value] || value || '—'}</option>`).join('');
     return `<tr class="${sel?'selected':''}">
       <td><select class="horse-mark-select" onchange="setHorseMark(event, ${h.num}, this.value)" onclick="event.stopPropagation()" aria-label="${esc(h.name)}の印">${markOptions}</select></td>
       <td><span class="waku-num" style="background:${wk.bg};color:${wk.fg}">${h.waku}</span></td>
