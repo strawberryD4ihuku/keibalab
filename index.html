@@ -1841,12 +1841,9 @@ function winModelContributions(pred, model, topN) {
   };
 }
 
-function horseInfoLinks(h) {
+function horseArticleLink(h) {
   const newsUrl = `https://news.netkeiba.com/?pid=news_search&keyword=${encodeURIComponent(h.name || '')}`;
-  const profile = h.horseId
-    ? `<a href="https://db.netkeiba.com/horse/${esc(h.horseId)}/" target="_blank" rel="noopener" class="horse-info-link" onclick="event.stopPropagation()" aria-label="${esc(h.name)}の戦績と血統を見る">戦績</a>`
-    : '';
-  return `<span class="horse-info-links">${profile}<a href="${esc(newsUrl)}" target="_blank" rel="noopener" class="horse-info-link" onclick="event.stopPropagation()" aria-label="${esc(h.name)}の最新記事を探す">記事</a></span>`;
+  return `<span class="horse-info-links"><a href="${esc(newsUrl)}" target="_blank" rel="noopener" class="horse-info-link" onclick="event.stopPropagation()" aria-label="${esc(h.name)}の最新記事を探す">記事</a></span>`;
 }
 
 const HORSE_MARK_OPTIONS = ['', '◎', '○', '▲', '△', '☆'];
@@ -1900,7 +1897,7 @@ function renderTable() {
       <td><select class="horse-mark-select" onchange="setHorseMark(event, ${h.num}, this.value)" onclick="event.stopPropagation()" aria-label="${esc(h.name)}の印">${markOptions}</select></td>
       <td><span class="waku-num" style="background:${wk.bg};color:${wk.fg}">${h.waku}</span></td>
       <td><strong>${h.num}</strong></td>
-      <td style="text-align:left;font-weight:500;white-space:nowrap"><div class="horse-identity">${h.horseId ? `<a href="https://db.netkeiba.com/horse/${esc(h.horseId)}/" target="_blank" rel="noopener" class="horse-link" onclick="event.stopPropagation()">${esc(h.name)}</a>` : esc(h.name)}${h.sire ? `<span class="horse-sire">父 ${h.sireStats?.sire_id ? `<a href="https://db.netkeiba.com/horse/${esc(h.sireStats.sire_id)}/" target="_blank" rel="noopener" class="horse-link" style="color:var(--gold);border-bottom-color:rgba(240,192,64,0.4)" onclick="event.stopPropagation()">${esc(h.sire)}</a>` : esc(h.sire)}</span>` : ''}${horseInfoLinks(h)}</div></td>
+      <td style="text-align:left;font-weight:500;white-space:nowrap"><div class="horse-identity">${h.horseId ? `<a href="https://db.netkeiba.com/horse/${esc(h.horseId)}/" target="_blank" rel="noopener" class="horse-link" onclick="event.stopPropagation()">${esc(h.name)}</a>` : esc(h.name)}${h.sire ? `<span class="horse-sire">${h.sireStats?.sire_id ? `<a href="https://db.netkeiba.com/horse/${esc(h.sireStats.sire_id)}/" target="_blank" rel="noopener" class="horse-link" style="color:var(--gold);border-bottom-color:rgba(240,192,64,0.4)" onclick="event.stopPropagation()">${esc(h.sire)}</a>` : esc(h.sire)}産駒</span>` : ''}${horseArticleLink(h)}</div></td>
       <td style="color:var(--text2);white-space:nowrap">${h.jockeyId ? `<a href="https://db.netkeiba.com/jockey/${esc(h.jockeyId)}/" target="_blank" rel="noopener" class="horse-link" style="color:var(--text2)" onclick="event.stopPropagation()">${esc(h.jockey)}</a>` : esc(h.jockey)}</td>
       <td>${fmtRank(h.p1)}</td>
       <td>${fmtRank(h.p2)}</td>
