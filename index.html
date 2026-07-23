@@ -1256,7 +1256,6 @@ function positionSimulationHorses(progress) {
     targets.set(entry.num, Math.max(-.14, leaderProgress - cumulativeGap / distance));
   });
 
-  const placed = [];
   ranked.forEach((entry, rank) => {
     const targetProgress = targets.get(entry.num);
     const oldProgress = simulationDisplayProgress.get(entry.num);
@@ -1273,22 +1272,14 @@ function positionSimulationHorses(progress) {
     const fraction = simulationCourseFraction(displayProgress);
     const point = RaceCourse.pointAt(simulationPath, fraction);
     const maxLane = Math.min(25, Math.max(17, width * .032));
-    const candidates = [lane, -.9, -.45, 0, .45, .9];
-    let best = null;
-    for (let c = 0; c < candidates.length; c++) {
-      const laneValue = candidates[(c + entry.seed) % candidates.length];
-      const backward = c > 3 ? (c - 3) * 8 : 0;
-      const x = point.x + point.nx * laneValue * maxLane - point.tx * backward;
-      const y = point.y + point.ny * laneValue * maxLane - point.ty * backward;
-      const nearest = placed.length ? Math.min(...placed.map(p => Math.hypot(p.x-x,p.y-y))) : 999;
-      if (!best || nearest > best.nearest) best = {x,y,nearest};
-      if (nearest >= 23) break;
-    }
-    placed.push(best);
+    // 毎フレーム衝突判定でレーンを切り替えると馬番が微振動する。
+    // 縦方向の間隔は targets で確保済みなので、横位置は連続値の固定レーンだけを使う。
+    const x = point.x + point.nx * lane * maxLane;
+    const y = point.y + point.ny * lane * maxLane;
     const marker = document.querySelector(`.sim-horse[data-num="${entry.num}"]`);
     if (marker) {
-      marker.style.left = `${best.x}px`;
-      marker.style.top = `${best.y}px`;
+      marker.style.left = `${x}px`;
+      marker.style.top = `${y}px`;
       marker.classList.toggle('leader', entry.num === leaderNum && progress > 0);
       marker.style.zIndex = String(20 - rank);
     }
@@ -1328,9 +1319,10 @@ function drawSimulationCourse() {
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
   trace(); ctx.strokeStyle='rgba(0,0,0,.3)'; ctx.lineWidth=trackWidth+8; ctx.stroke();
-  trace(); ctx.strokeStyle=currentRaceSurface==='ダ'?'#8b6745':'#8a704e'; ctx.lineWidth=trackWidth; ctx.stroke();
+  const isDirtCourse = currentRaceSurface === 'ダ';
+  trace(); ctx.strokeStyle=isDirtCourse?'#7b5738':'#356f3d'; ctx.lineWidth=trackWidth; ctx.stroke();
   trace(); ctx.strokeStyle='rgba(255,255,255,.22)'; ctx.lineWidth=trackWidth-5; ctx.stroke();
-  trace(); ctx.strokeStyle=currentRaceSurface==='ダ'?'#9c7650':'#947956'; ctx.lineWidth=trackWidth-8; ctx.stroke();
+  trace(); ctx.strokeStyle=isDirtCourse?'#a77d50':'#559a50'; ctx.lineWidth=trackWidth-8; ctx.stroke();
   ctx.setLineDash([7,9]); trace(); ctx.strokeStyle='rgba(255,255,255,.35)'; ctx.lineWidth=1; ctx.stroke(); ctx.setLineDash([]);
 
   function drawLineAt(fraction, color, label, length) {
