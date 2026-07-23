@@ -1251,7 +1251,9 @@ function positionSimulationHorses(progress) {
   const targets = new Map();
   ranked.forEach((entry, rank) => {
     if (rank) cumulativeGap += (7 + entry.seed % 5 + (rank % 5 === 0 ? 11 : 0)) * (1.2 - progress * .4);
-    targets.set(entry.num, Math.max(0, leaderProgress - cumulativeGap / distance));
+    // 発走地点で全頭を同じ1点に重ねない。画面上はゲート後方へ少しずつ
+    // ずらし、スタート後に実際の隊列へ滑らかに収束させる。
+    targets.set(entry.num, Math.max(-.14, leaderProgress - cumulativeGap / distance));
   });
 
   const placed = [];
@@ -1345,6 +1347,7 @@ function drawSimulationCourse() {
   drawLineAt(simulationCourseFraction(0),'#72d5ff','START',trackWidth*.48);
   const maxMarker = Math.min(Number(currentRaceDistance)||1600, simulationCourse.lap)-200;
   const sign = simulationCourse.direction === 'left' ? -1 : 1;
+  const startFraction = simulationCourseFraction(0);
   for (let remain=200; remain<=maxMarker; remain+=200) {
     const fraction = -sign * remain / simulationCourse.lap;
     const p=RaceCourse.pointAt(simulationPath,fraction);
@@ -1352,8 +1355,11 @@ function drawSimulationCourse() {
     const bx=p.x+p.nx*edge, by=p.y+p.ny*edge;
     ctx.beginPath(); ctx.moveTo(bx-p.tx*3,by-p.ty*3); ctx.lineTo(bx+p.nx*9,by+p.ny*9);
     ctx.strokeStyle=remain%400===0?'#ffdf62':'#fff'; ctx.lineWidth=3; ctx.stroke();
-    ctx.font='700 9px -apple-system, sans-serif'; ctx.fillStyle=remain%400===0?'#ffdf62':'#fff'; ctx.textAlign='center';
-    ctx.fillText(`${remain/200}F`,bx+p.nx*17,by+p.ny*17+3);
+    const circularGap = Math.min(Math.abs(fraction-startFraction)%1, 1-(Math.abs(fraction-startFraction)%1));
+    if (circularGap > .035) {
+      ctx.font='700 9px -apple-system, sans-serif'; ctx.fillStyle=remain%400===0?'#ffdf62':'#fff'; ctx.textAlign='center';
+      ctx.fillText(`${remain/200}F`,bx+p.nx*17,by+p.ny*17+3);
+    }
   }
 
   ctx.font='700 11px -apple-system, sans-serif'; ctx.fillStyle='rgba(255,255,255,.82)'; ctx.textAlign='left';
