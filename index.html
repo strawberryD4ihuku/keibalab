@@ -477,7 +477,7 @@
       </div>
 
       <div class="card workflow-card" id="forward-validation-card">
-        <div class="card-title"><span class="step-badge">1</span>これからのレースを事前判定 <span class="section-tag">前向き検証</span></div>
+        <div class="card-title"><span class="step-badge">1</span>これからのレースを事前判定</div>
         <div class="workflow-note">
           発売中のオッズで、その日の全レースを<strong>「買う」「見送る」</strong>に判定して固定保存します。レース終了後に実際の結果を集計し、モデルが本番でも通用するか確かめます。
         </div>
@@ -499,29 +499,30 @@
       </div>
 
       <div class="card">
-        <div class="card-title"><span class="step-badge">2</span>過去レースを検証データに追加 <span class="section-tag">回顧検証</span></div>
-        <div class="workflow-note">直近7日をすぐ集計するか、期間を指定して過去にさかのぼります。どちらも同じ検証データへ保存され、次の条件分析の材料になります。</div>
-        <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
-          <button class="btn-yoso" style="width:auto" id="report-btn" onclick="runWeeklyReport()">📊 直近7日を取り込む・集計</button>
-          <div id="report-progress" class="progress-wrap"><div class="progress-track"><div class="progress-fill"></div></div><span class="progress-label"></span></div>
-        </div>
+        <div class="card-title"><span class="step-badge">2</span>過去レースを検証データに追加</div>
+        <div class="workflow-note">検証データは全ユーザーで共有しています。誰かが取り込んだレースは、ほかの人が再度取り込む必要はありません。</div>
+        <div id="shared-data-status" class="axis-desc">共有データの状況を確認しています...</div>
         <details style="margin-top:10px">
-          <summary style="font-size:12px;color:var(--text2);cursor:pointer">期間を指定して過去にさかのぼる</summary>
+          <summary style="font-size:12px;color:var(--text2);cursor:pointer">共有データを更新する（通常は操作不要）</summary>
+          <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:10px">
+            <button class="btn-yoso" style="width:auto" id="report-btn" onclick="runWeeklyReport()">📊 直近7日の不足分を追加</button>
+            <div id="report-progress" class="progress-wrap"><div class="progress-track"><div class="progress-fill"></div></div><span class="progress-label"></span></div>
+          </div>
+          <div style="font-size:11px;color:var(--text3);margin-top:8px">取り込み済みのレースは自動で除外します。古い期間を追加したい場合だけ日付を指定してください。</div>
           <div class="race-grid" style="margin-top:8px">
             <div class="field"><label>開始日</label><input type="date" id="bf-from"></div>
             <div class="field"><label>終了日</label><input type="date" id="bf-to"></div>
             <div class="field" style="display:flex;align-items:flex-end"><button class="btn-yoso" style="width:auto" id="bf-btn" onclick="runBackfill()">📥 指定期間を取り込む</button></div>
           </div>
         </details>
-        <div style="font-size:11px;color:var(--text3);margin-top:6px">初回は数分かかります。すでに取り込み済みのレースは重複保存しません。</div>
         <div id="report-out" style="margin-top:1rem"></div>
       </div>
 
       <div class="card">
-        <div class="card-title"><span class="step-badge">3</span>たまったデータから条件を分析 <span class="section-tag">仮説探索</span></div>
-        <div class="workflow-note">過去データを条件別に分け、成績がよかった買い方の候補を探します。ここで見つけた候補は確定ルールではなく、上の前向き検証で改めて確かめます。</div>
+        <div class="card-title"><span class="step-badge">3</span>たまったデータから条件を分析</div>
+        <div class="workflow-note">全員共通の検証データから結果を自動表示します。条件を変えたいときだけ再分析してください。見つかった候補は確定ルールではなく、上の事前判定で改めて確かめます。</div>
         <div style="display:flex;align-items:flex-end;gap:10px;flex-wrap:wrap">
-          <button class="btn-save" style="width:auto" id="grid-btn" onclick="runGridSearch()">🔎 条件別の成績を分析</button>
+          <button class="btn-save" style="width:auto" id="grid-btn" onclick="runGridSearch()">🔄 条件を変えて再分析</button>
           <div class="field" style="width:150px"><label>最低レース数（少ないとマグレが混ざります）</label><input type="number" id="grid-minn" value="50" min="5" step="5"></div>
           <div class="field" style="width:150px"><label>対象期間（昔の傾向が今も続くとは限りません）</label>
             <select id="grid-period">
@@ -1193,7 +1194,9 @@ function showPage(page) {
     syncForwardDateOptions();
     updateForwardBatchAvailability();
     settleForwardLedger().then(renderForwardSummary);
-    loadStrategyStats();
+    loadStrategyStats().then(count => {
+      if (count > 0 && !lastGrid && !gridRunning) runGridSearch();
+    });
     renderSavedStrategies();
   }
 }
@@ -2803,10 +2806,24 @@ async function runWeeklyReport() {
       detail.push(row);
     };
 
-    // 3レース並列で検証。確定済みレースの結果はブラウザにキャッシュして2回目以降は即表示
+    // Supabaseの検証結果は全ユーザー共通。共有済みレースは再計算せず、その結果を使う。
+    setProgressBar(progId, 10, '共有済みの検証データを確認中...');
+    const {data: sharedRows, error: sharedError} = await sb.from('verify_results')
+      .select('*').gte('date', weekAgoStr).lte('date', todayStr);
+    if (sharedError) throw new Error(sharedError.message);
+    const sharedByRace = new Map((sharedRows || []).map(row => [row.race_id, row]));
+    const raceById = new Map(races.map(r => [r.id, r]));
+    for (const row of sharedRows || []) {
+      const race = raceById.get(row.race_id);
+      const hitTypes = Object.entries(row.per_bet || {}).filter(([, p]) => Number(p?.ret) > 0).map(([bt]) => bt);
+      applyRow({...row, name: race?.name || '', honmei: '共有済み', top3: '保存済み', hitTypes});
+    }
+    const missingRaces = races.filter(r => !sharedByRace.has(r.id));
+
+    // 不足分だけ3レース並列で検証。確定済みの結果は共有DBとブラウザへ保存する
     // このフェーズが本体（全体の15〜95%）
     const rowsToSave = [];
-    await mapLimitClient(races, 3, async (r) => {
+    await mapLimitClient(missingRaces, 3, async (r) => {
       const base = {date: r.date, venue: r.venue, num: r.num, name: r.name};
       try {
         const v = await verifyRaceCore(r);
@@ -2817,13 +2834,17 @@ async function runWeeklyReport() {
         detail.push({...base, note: '取得失敗'});
       } finally {
         done++;
-        setProgressBar(progId, 15 + (done / races.length) * 80, `検証中 ${done}/${races.length}...`);
+        setProgressBar(progId, 15 + (done / missingRaces.length) * 80, `不足分を検証中 ${done}/${missingRaces.length}...`);
       }
     });
 
     setProgressBar(progId, 97, '結果を保存中...');
     await saveVerifyRows(rowsToSave).catch(() => {});
     hideProgressBar(progId);
+    showToast(missingRaces.length
+      ? `共有済み${sharedByRace.size}レース・不足分${rowsToSave.length}レースを追加しました`
+      : '直近7日のレースはすべて共有済みです');
+    await loadStrategyStats();
     detail.sort((a, b) => a.date.localeCompare(b.date) || a.venue.localeCompare(b.venue) || a.num - b.num);
     renderReport(agg, detail, outEl);
   } catch (e) {
@@ -2876,7 +2897,7 @@ function renderReport(agg, detail, outEl) {
   }
   if (curGroup) html += '</div>';
   html += '</div></details>';
-  html += '<div class="kaime-note" style="display:block;margin-top:10px">※ 直近7日の全レースを対象に、予想スコアによる買い目（1点100円）を全券種で購入した想定。オッズ・払戻は確定値、各馬の戦績集計はレース当日より前のデータのみ使用。検証済みレースはブラウザに保存され、2回目以降は高速に表示されます。</div>';
+  html += '<div class="kaime-note" style="display:block;margin-top:10px">※ 直近7日の全レースを対象に、予想スコアによる買い目（1点100円）を全券種で購入した想定。オッズ・払戻は確定値、各馬の戦績集計はレース当日より前のデータのみ使用。検証済みレースは全ユーザーで共有され、同じレースを再計算しません。</div>';
   outEl.innerHTML = html;
 }
 
@@ -2898,15 +2919,26 @@ async function loadAllVerifyRows(onProgress) {
 
 async function loadStrategyStats() {
   const el = document.getElementById('strategy-stats');
+  const sharedEl = document.getElementById('shared-data-status');
   if (!el) return;
   try {
     const {count} = await sb.from('verify_results').select('*', {count: 'exact', head: true});
-    if (!count) { el.textContent = 'たまっているデータ: 0レース（まず上の「今週の結果を集計」を実行してください）'; return; }
+    if (!count) {
+      el.textContent = 'たまっているデータ: 0レース';
+      if (sharedEl) sharedEl.textContent = '共有データはまだありません。最初の1回だけ取り込みが必要です。';
+      return 0;
+    }
     const {data: minMax} = await sb.from('verify_results').select('date').order('date').limit(1);
     const {data: maxRow} = await sb.from('verify_results').select('date').order('date', {ascending: false}).limit(1);
-    el.textContent = `たまっているデータ: ${count}レース（${minMax?.[0]?.date || '?'} 〜 ${maxRow?.[0]?.date || '?'}）`;
+    const from = minMax?.[0]?.date || '?';
+    const to = maxRow?.[0]?.date || '?';
+    el.textContent = `共有データ: ${count}レース（${from} 〜 ${to}）`;
+    if (sharedEl) sharedEl.innerHTML = `✅ <strong>${count}レース分を共有済み</strong>（${esc(from)} 〜 ${esc(to)}）。通常はそのまま下の分析結果を見ればOKです。`;
+    return count;
   } catch (e) {
     el.textContent = 'データ件数の取得に失敗: ' + e.message;
+    if (sharedEl) sharedEl.textContent = '共有データの状況を取得できませんでした。';
+    return 0;
   }
 }
 
