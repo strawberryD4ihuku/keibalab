@@ -146,6 +146,9 @@
   .pace-group { display: flex; padding: 3px; gap: 2px; background: var(--bg3); border-radius: var(--radius-sm); }
   .pace-btn { min-height: 34px; padding: 5px 10px; border: 0; border-radius: 4px; color: var(--text2); background: transparent; cursor: pointer; font-size: 12px; }
   .pace-btn.active { background: var(--accent); color: #fff; }
+  .sim-setting { min-width: 92px; }
+  .sim-setting label { display:block; color:var(--text2); font-size:10px; margin-bottom:2px; }
+  .sim-setting select { min-height:34px; padding:4px 26px 4px 8px; font-size:12px; }
   .sim-action { min-height: 40px; width: auto; padding: 7px 14px; }
   .sim-action:disabled, .pace-btn:disabled { cursor: not-allowed; opacity: 0.45; }
   .sim-stage { position: relative; overflow: hidden; aspect-ratio: 2 / 1; min-height: 260px; border-radius: 18px; background: #174f35; border: 1px solid rgba(255,255,255,0.12); box-shadow: inset 0 0 35px rgba(0,0,0,0.24); }
@@ -252,6 +255,8 @@
     .race-sim-controls { align-items: stretch; }
     .pace-group { width: 100%; }
     .pace-btn { flex: 1; min-height: 40px; }
+    .sim-setting { flex:1; min-width:calc(50% - 4px); }
+    .sim-setting select { min-height:40px; }
     .sim-action { flex: 1; min-width: 88px; }
     .sim-stage { min-height: 190px; aspect-ratio: 1.65 / 1; }
     .sim-horse { width: 20px; height: 20px; margin: -10px 0 0 -10px; font-size: 9px; }
@@ -364,7 +369,7 @@
         <div class="race-sim" id="race-simulation">
           <div class="race-sim-head">
             <div>
-              <div class="race-sim-title">🏇 展開シミュレーション <span class="section-tag">お楽しみ</span></div>
+              <div class="race-sim-title">🏇 展開シミュレーション</div>
               <div class="race-sim-sub">過去5走のコーナー位置から脚質を推定し、競馬場別コース上で展開の一例を表示します。着順を保証する予測ではありません。</div>
             </div>
           </div>
@@ -373,6 +378,23 @@
               <button class="pace-btn" data-pace="slow" onclick="setSimulationPace('slow')" disabled>スロー</button>
               <button class="pace-btn active" data-pace="standard" onclick="setSimulationPace('standard')" disabled>標準</button>
               <button class="pace-btn" data-pace="high" onclick="setSimulationPace('high')" disabled>ハイ</button>
+            </div>
+            <div class="sim-setting">
+              <label for="sim-weather">天候</label>
+              <select id="sim-weather" onchange="setSimulationWeather(this.value)">
+                <option value="sunny">晴</option>
+                <option value="cloudy">曇</option>
+                <option value="rain">雨</option>
+              </select>
+            </div>
+            <div class="sim-setting">
+              <label for="sim-track-condition">馬場状態</label>
+              <select id="sim-track-condition" onchange="setSimulationTrackCondition(this.value)">
+                <option value="良">良</option>
+                <option value="稍重">稍重</option>
+                <option value="重">重</option>
+                <option value="不良">不良</option>
+              </select>
             </div>
             <button class="btn-yoso sim-action" id="sim-play" onclick="playRaceSimulation()" disabled>▶ 展開を見る</button>
             <button class="logout-btn sim-action" id="sim-reset" onclick="resetRaceSimulation()" disabled>↺ 最初から</button>
@@ -559,6 +581,8 @@ let simulationFinishSeconds = 0;
 let simulationDisplayProgress = new Map();
 let simulationDisplayLane = new Map();
 const SIMULATION_DURATION_MS = 20000;
+let simulationWeather = 'sunny';
+let simulationTrackCondition = '良';
 
 // ===== 分析（おいしい買い方さがし）と予想ページで共通のビン分け =====
 // 変えると保存済みの勝ちパターンと判定がズレるので注意
@@ -1165,7 +1189,8 @@ function prepareRaceSimulation() {
     currentRaceDistance,
     currentRaceSurface,
     simulationPace,
-    simulationCourse.venue
+    simulationCourse.venue,
+    simulationTrackCondition
   );
   simulationDisplayProgress = new Map();
   simulationDisplayLane = new Map();
@@ -1174,12 +1199,14 @@ function prepareRaceSimulation() {
     const color = WAKU_COLORS[h.waku] || {bg: '#4f8ef7', fg: '#fff'};
     return `<div class="sim-horse" data-num="${h.num}" title="${h.num}番 ${esc(h.name)}（${h.style}想定）" style="background:${color.bg};color:${color.fg}">${h.num}</div>`;
   }).join('');
-  document.getElementById('sim-comment').textContent = `${simulationPaceLabel(simulationPace)}想定。ペースを選んで「展開を見る」を押してください。`;
+  const conditionText = `${simulationWeather === 'rain' ? '雨' : simulationWeather === 'cloudy' ? '曇' : '晴'}・${simulationTrackCondition}馬場`;
+  document.getElementById('sim-comment').textContent = `${conditionText}、${simulationPaceLabel(simulationPace)}想定。「展開を見る」を押してください。`;
   document.getElementById('sim-phase').textContent = '発走前';
   document.getElementById('sim-result').innerHTML = '';
   const variant = simulationCourse.variant ? `・${simulationCourse.variant}` : '';
+  const weatherLabel = simulationWeather === 'rain' ? '雨' : simulationWeather === 'cloudy' ? '曇' : '晴';
   document.getElementById('sim-course-label').textContent =
-    `${simulationCourse.venue} ${simulationCourse.surface}${variant}・${simulationCourse.direction === 'left' ? '左' : '右'}回り`;
+    `${simulationCourse.venue} ${simulationCourse.surface}${variant}・${simulationCourse.direction === 'left' ? '左' : '右'}回り・${weatherLabel}・${simulationTrackCondition}`;
   document.getElementById('sim-clock').textContent = '0.0秒';
   document.getElementById('sim-remaining').textContent = `${currentRaceDistance || '—'}m`;
   document.getElementById('sim-finish-time').textContent = RaceCourse.formatTime(simulationFinishSeconds) + '目安';
@@ -1192,6 +1219,16 @@ function prepareRaceSimulation() {
 function setSimulationPace(pace) {
   simulationPace = ['slow', 'standard', 'high'].includes(pace) ? pace : 'standard';
   document.querySelectorAll('.pace-btn').forEach(btn => btn.classList.toggle('active', btn.dataset.pace === simulationPace));
+  if (horses.length) prepareRaceSimulation();
+}
+
+function setSimulationWeather(weather) {
+  simulationWeather = ['sunny', 'cloudy', 'rain'].includes(weather) ? weather : 'sunny';
+  if (horses.length) prepareRaceSimulation();
+}
+
+function setSimulationTrackCondition(condition) {
+  simulationTrackCondition = ['良', '稍重', '重', '不良'].includes(condition) ? condition : '良';
   if (horses.length) prepareRaceSimulation();
 }
 
@@ -1309,6 +1346,11 @@ function drawSimulationCourse() {
   const ctx = canvas.getContext('2d');
   ctx.scale(dpr, dpr);
   ctx.clearRect(0, 0, width, height);
+  if (simulationWeather === 'cloudy') {
+    ctx.fillStyle='rgba(22,28,38,.16)'; ctx.fillRect(0,0,width,height);
+  } else if (simulationWeather === 'rain') {
+    ctx.fillStyle='rgba(18,30,45,.22)'; ctx.fillRect(0,0,width,height);
+  }
   simulationPath = RaceCourse.buildPath(simulationCourse, width, height);
   const trackWidth = Math.min(62, Math.max(44, width * .075));
 
@@ -1321,9 +1363,19 @@ function drawSimulationCourse() {
   ctx.lineJoin = 'round';
   trace(); ctx.strokeStyle='rgba(0,0,0,.3)'; ctx.lineWidth=trackWidth+8; ctx.stroke();
   const isDirtCourse = currentRaceSurface === 'ダ';
-  trace(); ctx.strokeStyle=isDirtCourse?'#7b5738':'#356f3d'; ctx.lineWidth=trackWidth; ctx.stroke();
+  const turfColors = {
+    '良':['#356f3d','#559a50'], '稍重':['#315f39','#4a8548'],
+    '重':['#2d5536','#407443'], '不良':['#294a33','#365f3b'],
+  };
+  const dirtColors = {
+    '良':['#7b5738','#a77d50'], '稍重':['#704f37','#926b49'],
+    '重':['#634836','#7f5e46'], '不良':['#574033','#6e5342'],
+  };
+  const courseColors = (isDirtCourse ? dirtColors : turfColors)[simulationTrackCondition] ||
+    (isDirtCourse ? dirtColors['良'] : turfColors['良']);
+  trace(); ctx.strokeStyle=courseColors[0]; ctx.lineWidth=trackWidth; ctx.stroke();
   trace(); ctx.strokeStyle='rgba(255,255,255,.22)'; ctx.lineWidth=trackWidth-5; ctx.stroke();
-  trace(); ctx.strokeStyle=isDirtCourse?'#a77d50':'#559a50'; ctx.lineWidth=trackWidth-8; ctx.stroke();
+  trace(); ctx.strokeStyle=courseColors[1]; ctx.lineWidth=trackWidth-8; ctx.stroke();
   ctx.setLineDash([7,9]); trace(); ctx.strokeStyle='rgba(255,255,255,.35)'; ctx.lineWidth=1; ctx.stroke(); ctx.setLineDash([]);
 
   function drawLineAt(fraction, color, label, length) {
@@ -1360,6 +1412,13 @@ function drawSimulationCourse() {
   ctx.fillText(`直線 ${Math.round(simulationCourse.straight)}m`,12,34);
   ctx.textAlign='right';
   ctx.fillText(simulationCourse.direction==='left'?'↺ 左回り':'↻ 右回り',width-12,18);
+  if (simulationWeather === 'rain') {
+    ctx.strokeStyle='rgba(180,215,255,.32)'; ctx.lineWidth=1;
+    for (let i=0;i<70;i++) {
+      const x=(i*83%997)/997*width, y=(i*47%389)/389*height;
+      ctx.beginPath(); ctx.moveTo(x,y); ctx.lineTo(x-5,y+12); ctx.stroke();
+    }
+  }
 }
 
 window.addEventListener('resize', () => {
@@ -1383,8 +1442,8 @@ function updateSimulationComment(progress) {
   if (progress >= 0.45) {
     phase = '向正面';
     text = chasing
-      ? `${simulationPaceLabel(simulationPace)}の流れ。${lead.num}番が先頭、${chasing.num}番が追走。`
-      : `${simulationPaceLabel(simulationPace)}の流れで進みます。`;
+      ? `${simulationTrackCondition}馬場、${simulationPaceLabel(simulationPace)}の流れ。${lead.num}番が先頭、${chasing.num}番が追走。`
+      : `${simulationTrackCondition}馬場、${simulationPaceLabel(simulationPace)}の流れで進みます。`;
   }
   if (progress >= 0.68) {
     phase = '3〜4コーナー';
