@@ -8,6 +8,7 @@
 <meta name="theme-color" content="#4f8ef7">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<script src="./lib/race-simulation.js"></script>
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
   :root {
@@ -135,6 +136,32 @@
   .combo-odds { color: var(--green); font-weight: 600; font-size: 11px; margin-left: 2px; }
   .yoso-comment { font-size: 12px; color: var(--text2); margin-top: 8px; }
 
+  /* Race simulation */
+  .race-sim { margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border); }
+  .race-sim-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+  .race-sim-title { font-size: 14px; font-weight: 700; }
+  .race-sim-sub { font-size: 11px; color: var(--text2); margin-top: 2px; }
+  .race-sim-controls { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; margin-bottom: 10px; }
+  .pace-group { display: flex; padding: 3px; gap: 2px; background: var(--bg3); border-radius: var(--radius-sm); }
+  .pace-btn { min-height: 34px; padding: 5px 10px; border: 0; border-radius: 4px; color: var(--text2); background: transparent; cursor: pointer; font-size: 12px; }
+  .pace-btn.active { background: var(--accent); color: #fff; }
+  .sim-action { min-height: 40px; width: auto; padding: 7px 14px; }
+  .sim-action:disabled, .pace-btn:disabled { cursor: not-allowed; opacity: 0.45; }
+  .sim-stage { position: relative; overflow: hidden; aspect-ratio: 2 / 1; min-height: 220px; border-radius: 18px; background: #174f35; border: 1px solid rgba(255,255,255,0.12); box-shadow: inset 0 0 35px rgba(0,0,0,0.24); }
+  .sim-track { position: absolute; inset: 10%; border: clamp(20px, 5vw, 48px) solid #9c7650; border-radius: 50%; box-shadow: inset 0 0 0 2px rgba(255,255,255,0.2), 0 0 0 2px rgba(255,255,255,0.18); }
+  .sim-track::before { content: ''; position: absolute; inset: -24px; border: 1px dashed rgba(255,255,255,0.5); border-radius: 50%; }
+  .sim-finish { position: absolute; right: 9%; top: 43%; width: 11%; height: 4px; transform: rotate(-8deg); background: repeating-linear-gradient(90deg,#fff 0 6px,#222 6px 12px); z-index: 2; }
+  .sim-marker-layer { position: absolute; inset: 0; }
+  .sim-horse { position: absolute; width: 27px; height: 27px; margin: -13.5px 0 0 -13.5px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 800; border: 2px solid rgba(255,255,255,0.8); box-shadow: 0 2px 7px rgba(0,0,0,0.55); z-index: 4; will-change: left, top; }
+  .sim-horse.leader { box-shadow: 0 0 0 3px rgba(240,192,64,0.45), 0 2px 7px rgba(0,0,0,0.55); }
+  .sim-caption { display: flex; justify-content: space-between; gap: 12px; align-items: center; min-height: 40px; padding: 8px 10px; margin-top: 8px; border-radius: var(--radius-sm); background: var(--bg3); }
+  .sim-comment { color: var(--text); font-size: 12px; }
+  .sim-phase { flex-shrink: 0; font-size: 11px; color: var(--gold); }
+  .sim-result { margin-top: 8px; display: flex; gap: 6px; flex-wrap: wrap; }
+  .sim-result-chip { display: inline-flex; align-items: center; gap: 5px; padding: 4px 8px; border: 1px solid var(--border); border-radius: 100px; background: var(--bg3); font-size: 11px; }
+  .sim-rank { color: var(--gold); font-weight: 700; }
+  .sim-empty { color: var(--text3); font-size: 12px; padding: 1rem; text-align: center; }
+
   /* Save bet form */
   .bet-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border); }
   .btn-save { background: var(--green); color: #0a2a1a; border: none; padding: 9px 20px; border-radius: var(--radius-sm); font-size: 13px; font-weight: 600; cursor: pointer; transition: all 0.15s; white-space: nowrap; }
@@ -219,6 +246,16 @@
     .yoso-actions { gap: 10px; align-items: stretch; }
     .yoso-actions .field { width: 100%; }
     .yoso-actions select { width: 100% !important; }
+    .race-sim-head { display: block; }
+    .race-sim-controls { align-items: stretch; }
+    .pace-group { width: 100%; }
+    .pace-btn { flex: 1; min-height: 40px; }
+    .sim-action { flex: 1; min-width: 88px; }
+    .sim-stage { min-height: 190px; aspect-ratio: 1.65 / 1; }
+    .sim-track { inset: 12% 8%; border-width: 27px; }
+    .sim-track::before { inset: -14px; }
+    .sim-horse { width: 24px; height: 24px; margin: -12px 0 0 -12px; font-size: 11px; }
+    .sim-caption { align-items: flex-start; }
     .toast { left: 12px; right: 12px; bottom: calc(70px + env(safe-area-inset-bottom)); text-align: center; }
   }
 </style>
@@ -322,6 +359,36 @@
             </tr></thead>
             <tbody id="uma-tbody"></tbody>
           </table>
+        </div>
+        <div class="race-sim" id="race-simulation">
+          <div class="race-sim-head">
+            <div>
+              <div class="race-sim-title">🏇 展開シミュレーション <span class="section-tag">お楽しみ</span></div>
+              <div class="race-sim-sub">参考スコアや近走から、位置取りの一例をアニメーションで表示します。着順を保証する予測ではありません。</div>
+            </div>
+          </div>
+          <div class="race-sim-controls">
+            <div class="pace-group" role="group" aria-label="想定ペース">
+              <button class="pace-btn" data-pace="slow" onclick="setSimulationPace('slow')" disabled>スロー</button>
+              <button class="pace-btn active" data-pace="standard" onclick="setSimulationPace('standard')" disabled>標準</button>
+              <button class="pace-btn" data-pace="high" onclick="setSimulationPace('high')" disabled>ハイ</button>
+            </div>
+            <button class="btn-yoso sim-action" id="sim-play" onclick="playRaceSimulation()" disabled>▶ 展開を見る</button>
+            <button class="logout-btn sim-action" id="sim-reset" onclick="resetRaceSimulation()" disabled>↺ 最初から</button>
+          </div>
+          <div id="sim-empty" class="sim-empty">先に出馬表を表示すると、ここで展開を見られます。</div>
+          <div id="sim-content" style="display:none">
+            <div class="sim-stage" id="sim-stage" aria-label="俯瞰コース上の展開シミュレーション">
+              <div class="sim-track"></div>
+              <div class="sim-finish"></div>
+              <div class="sim-marker-layer" id="sim-marker-layer"></div>
+            </div>
+            <div class="sim-caption" aria-live="polite">
+              <div class="sim-comment" id="sim-comment">ペースを選んで「展開を見る」を押してください。</div>
+              <div class="sim-phase" id="sim-phase">発走前</div>
+            </div>
+            <div class="sim-result" id="sim-result"></div>
+          </div>
         </div>
         <div class="yoso-actions">
           <div class="field"><label>券種</label>
@@ -473,6 +540,13 @@ let currentOddsTime = null;      // 出馬表取得時のオッズ時刻（単�
 let currentRaceClass = null;     // 穴候補モデルのレース文脈に使用
 let upsetModel = null;
 let upsetModelLoaded = false;
+let simulationPace = 'standard';
+let simulationPlan = [];
+let simulationProgress = 0;
+let simulationFrame = null;
+let simulationStartedAt = null;
+let simulationElapsed = 0;
+let simulationPlaying = false;
 
 // ===== 分析（おいしい買い方さがし）と予想ページで共通のビン分け =====
 // 変えると保存済みの勝ちパターンと判定がズレるので注意
@@ -889,6 +963,7 @@ async function fetchRaceData(recordForward = false) {
     currentRaceDistance = json.race_distance || null;
     currentOddsTime = json.odds_time || null;
     renderTable();
+    prepareRaceSimulation();
     document.getElementById('yoso-result').style.display = 'none';
     document.getElementById('bet-form').style.display = 'none';
     // 実際のレース名で上書き（サーバーが正しい名前を知っている）
@@ -913,6 +988,7 @@ async function fetchRaceData(recordForward = false) {
 async function enrichHorses(baseStatus, recordForward = false) {
   await enrichSires(baseStatus);
   await enrichJockeys(baseStatus);
+  prepareRaceSimulation();   // 補足データ反映後のスコアで展開を組み直す
   await refreshForwardValidation(recordForward).catch(e => console.warn('買うレース判定失敗:', e));
 }
 
@@ -1035,6 +1111,166 @@ function showPage(page) {
   if (page === 'stats') loadStats();
   if (page === 'bets') loadBets();
   if (page === 'report') { loadStrategyStats(); renderSavedStrategies(); }
+}
+
+// ===== 展開シミュレーション（娯楽用） =====
+// 実際の通過順位データは未取得のため、脚質は参考スコア・上がり・馬番から
+// 決定的に割り当てる。同じ入力とペースなら毎回同じ展開になる。
+function simulationPaceLabel(pace) {
+  return pace === 'slow' ? 'スロー' : pace === 'high' ? 'ハイ' : '標準';
+}
+
+function prepareRaceSimulation() {
+  cancelAnimationFrame(simulationFrame);
+  simulationFrame = null;
+  simulationPlaying = false;
+  simulationStartedAt = null;
+  simulationElapsed = 0;
+  simulationProgress = 0;
+  simulationPlan = [];
+
+  const available = horses.length > 0 && window.RaceSimulation;
+  document.querySelectorAll('.pace-btn').forEach(btn => { btn.disabled = !available; });
+  document.getElementById('sim-play').disabled = !available;
+  document.getElementById('sim-reset').disabled = !available;
+  document.getElementById('sim-empty').style.display = available ? 'none' : '';
+  document.getElementById('sim-content').style.display = available ? '' : 'none';
+  document.getElementById('sim-play').textContent = '▶ 展開を見る';
+  if (!available) return;
+
+  const entries = horses.map(h => ({...h, score: computeScore(h)}));
+  simulationPlan = RaceSimulation.createPlan(entries, simulationPace);
+  const layer = document.getElementById('sim-marker-layer');
+  layer.innerHTML = simulationPlan.map(h => {
+    const color = WAKU_COLORS[h.waku] || {bg: '#4f8ef7', fg: '#fff'};
+    return `<div class="sim-horse" data-num="${h.num}" title="${h.num}番 ${esc(h.name)}（${h.style}想定）" style="background:${color.bg};color:${color.fg}">${h.num}</div>`;
+  }).join('');
+  document.getElementById('sim-comment').textContent = `${simulationPaceLabel(simulationPace)}想定。ペースを選んで「展開を見る」を押してください。`;
+  document.getElementById('sim-phase').textContent = '発走前';
+  document.getElementById('sim-result').innerHTML = '';
+  positionSimulationHorses(0);
+}
+
+function setSimulationPace(pace) {
+  simulationPace = ['slow', 'standard', 'high'].includes(pace) ? pace : 'standard';
+  document.querySelectorAll('.pace-btn').forEach(btn => btn.classList.toggle('active', btn.dataset.pace === simulationPace));
+  if (horses.length) prepareRaceSimulation();
+}
+
+function resetRaceSimulation() {
+  if (!horses.length) return;
+  prepareRaceSimulation();
+}
+
+function playRaceSimulation() {
+  if (!simulationPlan.length) {
+    showToast('先に出馬表を表示してください');
+    return;
+  }
+  if (simulationPlaying) {
+    simulationPlaying = false;
+    cancelAnimationFrame(simulationFrame);
+    simulationFrame = null;
+    simulationStartedAt = null;
+    document.getElementById('sim-play').textContent = '▶ 続きを見る';
+    document.getElementById('sim-phase').textContent += '・一時停止';
+    return;
+  }
+  if (simulationProgress >= 1) prepareRaceSimulation();
+  simulationPlaying = true;
+  simulationStartedAt = null;
+  document.getElementById('sim-play').textContent = '⏸ 一時停止';
+  simulationFrame = requestAnimationFrame(runSimulationFrame);
+}
+
+function runSimulationFrame(timestamp) {
+  if (!simulationPlaying) return;
+  if (simulationStartedAt == null) simulationStartedAt = timestamp - simulationElapsed;
+  simulationElapsed = timestamp - simulationStartedAt;
+  simulationProgress = Math.min(1, simulationElapsed / 14000);
+  positionSimulationHorses(simulationProgress);
+  updateSimulationComment(simulationProgress);
+  if (simulationProgress >= 1) {
+    simulationPlaying = false;
+    simulationFrame = null;
+    document.getElementById('sim-play').textContent = '▶ もう一度';
+    renderSimulationResult();
+    return;
+  }
+  simulationFrame = requestAnimationFrame(runSimulationFrame);
+}
+
+function positionSimulationHorses(progress) {
+  const stage = document.getElementById('sim-stage');
+  if (!stage || !simulationPlan.length) return;
+  const width = stage.clientWidth;
+  const height = stage.clientHeight;
+  if (!width || !height) return;
+  const cx = width * 0.5;
+  const cy = height * 0.5;
+  const ranked = RaceSimulation.rankAt(simulationPlan, progress);
+  const leaderNum = ranked[0]?.num;
+
+  simulationPlan.forEach((entry, index) => {
+    const marker = document.querySelector(`.sim-horse[data-num="${entry.num}"]`);
+    if (!marker) return;
+    let x, y;
+    if (progress === 0) {
+      const spacing = Math.min(9, height * 0.54 / Math.max(1, simulationPlan.length - 1));
+      x = width * 0.865 - (index % 2) * 7;
+      y = cy + (index - (simulationPlan.length - 1) / 2) * spacing;
+    } else {
+      const horseProgress = RaceSimulation.progressFor(entry, progress);
+      const angle = horseProgress * Math.PI * 2;
+      const laneOffset = (index % 4 - 1.5) * 3;
+      x = cx + (width * 0.36 + laneOffset) * Math.cos(angle);
+      y = cy + (height * 0.31 + laneOffset * 0.35) * Math.sin(angle);
+    }
+    marker.style.left = `${x}px`;
+    marker.style.top = `${y}px`;
+    marker.classList.toggle('leader', entry.num === leaderNum && progress > 0);
+  });
+}
+
+function updateSimulationComment(progress) {
+  const ranked = RaceSimulation.rankAt(simulationPlan, progress);
+  const lead = ranked[0];
+  const chasing = ranked[1];
+  let phase = 'スタート';
+  let text = `各馬がスタート。${lead?.num}番${lead?.name || ''}が前へ。`;
+  if (progress >= 0.18) {
+    phase = '序盤';
+    text = chasing
+      ? `${lead.num}番${lead.name}が先頭。${chasing.num}番${chasing.name}が続きます。`
+      : `${lead.num}番${lead.name}が先頭です。`;
+  }
+  if (progress >= 0.45) {
+    phase = '向正面';
+    text = chasing
+      ? `${simulationPaceLabel(simulationPace)}の流れ。${lead.num}番が先頭、${chasing.num}番が追走。`
+      : `${simulationPaceLabel(simulationPace)}の流れで進みます。`;
+  }
+  if (progress >= 0.68) {
+    phase = '3〜4コーナー';
+    text = `${lead.num}番が先頭。${ranked.slice(1, 4).map(h => `${h.num}番`).join('、')}も差を詰めます。`;
+  }
+  if (progress >= 0.84) {
+    phase = '直線';
+    text = `直線の攻防。${ranked.slice(0, 3).map(h => `${h.num}番${h.name}`).join('、')}が前へ。`;
+  }
+  if (progress >= 1) {
+    phase = 'ゴール';
+    text = `${ranked[0].num}番${ranked[0].name}が先頭でゴールする想定になりました。`;
+  }
+  document.getElementById('sim-comment').textContent = text;
+  document.getElementById('sim-phase').textContent = phase;
+}
+
+function renderSimulationResult() {
+  const ranked = RaceSimulation.rankAt(simulationPlan, 1);
+  document.getElementById('sim-result').innerHTML = ranked.slice(0, 5).map((h, i) =>
+    `<span class="sim-result-chip"><span class="sim-rank">${i + 1}位想定</span> ${h.num}番 ${esc(h.name)} <span style="color:var(--text3)">${h.style}</span></span>`
+  ).join('');
 }
 
 // Axis

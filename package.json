@@ -5,7 +5,7 @@
   "main": "proxy.js",
   "scripts": {
     "start": "node proxy.js",
-    "test": "node tools/win-value.test.js && node tools/win-model.test.js && node tools/performance-features.test.js && node tools/condition-features.test.js && node tools/training-features.test.js && node tools/race-selector.test.js && node tools/upset-model.test.js",
+    "test": "node tools/win-value.test.js && node tools/win-model.test.js && node tools/performance-features.test.js && node tools/condition-features.test.js && node tools/training-features.test.js && node tools/race-selector.test.js && node tools/upset-model.test.js && node tools/race-simulation.test.js",
     "train:win": "node tools/train-win-model.js",
     "train:upset": "node tools/train-upset-model.js",
     "backtest:win": "node tools/win-value-backtest.js",
