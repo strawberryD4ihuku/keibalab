@@ -1759,6 +1759,7 @@ const WIN_MODEL_FEATURES = ['form', 'career', 'fit', 'venueFit', 'agari', 'jocke
 const WIN_MODEL_FEATURE_LABELS = {
   distanceDelta: '前走からの距離変化', distanceChangeFit: '今回距離適性',
   surfaceSwitch: '芝ダート替わり', targetSurfaceFit: '今回馬場適性',
+  wetTrackFit: '道悪での走り', wetTrackDelta: '良馬場との差',
   classChange: '昇級・降級', layoffLog: '休養日数', secondUp: '叩き2走目',
   gatePosition: '枠位置', runningStyle: '推定脚質',
   gateStyleInteraction: '枠×脚質', courseStyleFit: 'コース×脚質適性',
@@ -2076,6 +2077,10 @@ function buildScoredHorses(source = horses) {
     distanceChangeFit: h.career?.distanceChangeFit ?? h.distanceChangeFit ?? null,
     surfaceSwitch: h.career?.surfaceSwitch ?? h.surfaceSwitch ?? null,
     targetSurfaceFit: h.career?.targetSurfaceFit ?? h.targetSurfaceFit ?? null,
+    wetTrackRuns: h.career?.wetTrackRuns ?? h.wetTrackRuns ?? 0,
+    wetTrackTop3: h.career?.wetTrackTop3 ?? h.wetTrackTop3 ?? 0,
+    wetTrackFit: h.career?.wetTrackFit ?? h.wetTrackFit ?? null,
+    wetTrackDelta: h.career?.wetTrackDelta ?? h.wetTrackDelta ?? null,
     classChange: h.career?.classChange ?? h.classChange ?? null,
     layoffLog: h.career?.layoffLog ?? h.layoffLog ?? null,
     secondUp: h.career?.secondUp ?? h.secondUp ?? null,
@@ -2152,7 +2157,14 @@ function predictUpsetCandidates(scored, model) {
     let logit = upsetLogit(mp);
     for (let k = 0; k < values.length; k++) logit += (Number(model.theta[k]) || 0) * values[k];
     const p = upsetSigmoid(logit);
-    out.push({num: h.num, name: h.name, odds, predictedWinProb: p, expectedRoiPercent: p * odds * 0.95 * 100});
+    out.push({
+      num: h.num, name: h.name, odds, predictedWinProb: p,
+      expectedRoiPercent: p * odds * 0.95 * 100,
+      wetTrackRuns: h.wetTrackRuns ?? 0,
+      wetTrackTop3: h.wetTrackTop3 ?? 0,
+      wetTrackFit: h.wetTrackFit ?? null,
+      wetTrackDelta: h.wetTrackDelta ?? null,
+    });
   });
   return out.sort((a, b) => b.expectedRoiPercent - a.expectedRoiPercent || b.predictedWinProb - a.predictedWinProb || a.num - b.num);
 }
@@ -2215,8 +2227,15 @@ async function loadForwardLedgerFromSupabase() {
 
 function buildForwardPredictions(scored, oddsTime, betHorses = scored) {
   const raceDate = document.getElementById('race-date').value;
+  const wetTrackHorses = scored.map(h => ({
+    num: h.num,
+    runs: h.wetTrackRuns ?? 0,
+    top3: h.wetTrackTop3 ?? 0,
+    fit: h.wetTrackFit ?? null,
+    delta: h.wetTrackDelta ?? null,
+  }));
   const base = {
-    schema_version: 1, race_id: currentRaceId, race_date: raceDate,
+    schema_version: 2, race_id: currentRaceId, race_date: raceDate,
     venue: document.getElementById('venue').value,
     race_num: parseInt(document.getElementById('race-num').value),
     race_name: document.getElementById('race-name').value,
@@ -2230,7 +2249,10 @@ function buildForwardPredictions(scored, oddsTime, betHorses = scored) {
   const predictions = [{...base, strategy: 'stable', model_version: 'stable-small-field-favorite-v1',
     decision: stableBuy ? 'buy' : 'skip', bet_type: '複勝', picks: stableBuy ? stableCombos : [],
     invest: stableBuy ? stableCombos.length * 100 : 0,
-    signals: {field: betHorses.length, axis_num: axis?.num || null, axis_odds: Number(axis?.odds) || null},
+    signals: {
+      field: betHorses.length, axis_num: axis?.num || null, axis_odds: Number(axis?.odds) || null,
+      wet_track_schema: 1, wet_track_horses: wetTrackHorses,
+    },
   }];
   if (upsetModel) {
     const candidates = predictUpsetCandidates(scored, upsetModel);

@@ -222,6 +222,13 @@ test('20. 馬ごとの個人印をレース・ユーザー単位で保存する'
   assert.ok(html.includes('class="horse-mark-select"'), '個人印がプルダウンではない');
 });
 
+test('21. 前向き検証に全馬の道悪巧拙データを保存する', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+  assert.ok(html.includes('wet_track_horses: wetTrackHorses'), '全馬の道悪巧拙が前向き検証に保存されない');
+  assert.ok(html.includes('wetTrackRuns: h.career?.wetTrackRuns'), '出馬表データから道悪出走数を引き継いでいない');
+  assert.ok(html.includes("wetTrackFit: '道悪での走り'"), '道悪特徴量の説明がない');
+});
+
 // ---- index.html からスコアリング一式を抽出（jv-import.jsと同方式の簡易版）----
 function loadScoring(html) {
   const src = html.match(/<script>([\s\S]*?)<\/script>/)[1];

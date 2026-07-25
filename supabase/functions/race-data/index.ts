@@ -21,6 +21,8 @@ interface CareerStats {
   marginForm: number | null; classLevel: number | null;
   distanceDelta: number | null; distanceChangeFit: number | null;
   surfaceSwitch: number | null; targetSurfaceFit: number | null; classChange: number | null;
+  wetTrackRuns: number; wetTrackTop3: number;
+  wetTrackFit: number | null; wetTrackDelta: number | null;
   layoffLog: number | null; secondUp: number | null;
   gatePosition: number | null; runningStyle: number | null;
   gateStyleInteraction: number | null; courseStyleFit: number | null;
@@ -73,8 +75,17 @@ function summarizePerformance(runs: Array<{timeDiffSec: number | null; distance:
 }
 
 type ConditionRun = {date: string; rank: number; field: number | null; surface: string | null; distance: number | null;
-  venueCode: string | null; classLevel: number | null; corner1: number | null};
+  venueCode: string | null; classLevel: number | null; corner1: number | null; trackCondition: string | null};
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
+function normalizeTrackCondition(value: unknown) {
+  const s = String(value == null ? "" : value).replace(/\s+/g, "");
+  if (!s) return null;
+  if (s === "1" || s === "良") return "良";
+  if (s === "2" || /稍/.test(s)) return "稍重";
+  if (s === "3" || s === "重") return "重";
+  if (s === "4" || /不良/.test(s)) return "不良";
+  return null;
+}
 function runningStyle(runs: ConditionRun[]) {
   let sum = 0, weight = 0;
   runs.slice(0, 5).forEach((r, i) => {
@@ -101,11 +112,24 @@ function summarizeConditions(runs: ConditionRun[], current: {date: string; surfa
   const gap = last ? days(last.date, current.date) : null;
   const prevGap = last && prev ? days(prev.date, last.date) : null;
   const band = style == null ? null : style >= 2 / 3 ? 2 : style >= 1 / 3 ? 1 : 0;
+  const wetRuns = recent.filter((r) =>
+    r.surface === current.surface && normalizeTrackCondition(r.trackCondition) !== "良" &&
+    normalizeTrackCondition(r.trackCondition) != null && r.rank > 0 && Number(r.field) > 1);
+  const wetTrackFit = smoothed((r) =>
+    r.surface === current.surface && normalizeTrackCondition(r.trackCondition) !== "良" &&
+    normalizeTrackCondition(r.trackCondition) != null);
+  const dryTrackFit = smoothed((r) =>
+    r.surface === current.surface && normalizeTrackCondition(r.trackCondition) === "良");
   return {
     distanceDelta: last?.distance && current.distance ? clamp((current.distance - last.distance) / 400, -3, 3) : null,
     distanceChangeFit: current.distance ? smoothed((r) => r.surface === current.surface && sameDistance(r)) : null,
     surfaceSwitch: last?.surface && current.surface ? (last.surface === current.surface ? 0 : 1) : null,
     targetSurfaceFit: current.surface ? smoothed((r) => r.surface === current.surface) : null,
+    wetTrackRuns: wetRuns.length,
+    wetTrackTop3: wetRuns.filter((r) => r.rank <= 3).length,
+    wetTrackFit,
+    wetTrackDelta: wetTrackFit != null && dryTrackFit != null
+      ? clamp(wetTrackFit - dryTrackFit, -.5, .5) : null,
     classChange: last?.classLevel != null && current.classLevel != null ? clamp(current.classLevel - last.classLevel, -4, 4) : null,
     layoffLog: gap == null ? null : clamp(Math.log1p(gap) / Math.log(366), 0, 1.5),
     secondUp: prevGap == null || gap == null ? null : (prevGap >= 60 && gap >= 7 && gap <= 45 ? 1 : 0),
@@ -313,10 +337,12 @@ function parseCareer(html: string, venue: string, surface: string | null, distan
   const headers = [...tbl.matchAll(/<th[^>]*>([\s\S]*?)<\/th>/g)].map((x) => clean(x[1]));
   const col = (name: string, fallback: number) => { const i = headers.findIndex((h) => h === name || h.includes(name)); return i >= 0 ? i : fallback; };
   const dateCol = col("日付", 0), venueCol = col("開催", 1), raceNameCol = col("レース名", 4);
-  const rankCol = col("着順", 11), distanceCol = col("距離", 14), marginCol = col("着差", 18);
+  const rankCol = col("着順", 11), distanceCol = col("距離", 14);
+  const trackConditionCol = col("馬場", 15), marginCol = col("着差", 18);
   const s: CareerStats = {n: 0, w: 0, p3: 0, fitN: 0, fitW: 0, fitP3: 0, venueN: 0, venueP3: 0,
     marginForm: null, classLevel: null, distanceDelta: null, distanceChangeFit: null,
-    surfaceSwitch: null, targetSurfaceFit: null, classChange: null, layoffLog: null, secondUp: null,
+    surfaceSwitch: null, targetSurfaceFit: null, wetTrackRuns: 0, wetTrackTop3: 0,
+    wetTrackFit: null, wetTrackDelta: null, classChange: null, layoffLog: null, secondUp: null,
     gatePosition: null, runningStyle: null, gateStyleInteraction: null, courseStyleFit: null};
   const performanceRuns: Array<ConditionRun & {timeDiffSec: number | null; raceClass: string | null}> = [];
   for (const m of rows) {
@@ -349,6 +375,7 @@ function parseCareer(html: string, venue: string, surface: string | null, distan
       corner1: parseInt((cells[17] || "").match(/\d+/)?.[0] || "") || null,
       timeDiffSec: /^[-+]?\d+(?:\.\d+)?$/.test(marginText) ? Number(marginText) : null,
       distance: dm ? parseInt(dm[2], 10) : null,
+      trackCondition: normalizeTrackCondition(cells[trackConditionCol]),
       raceClass: cells[raceNameCol] || null,
     });
   }

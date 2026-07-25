@@ -297,6 +297,7 @@ async function main() {
     const run = {
       date: race.date, rank: e.rank, field: race.field, agari: e.agari,
       surface: race.surface, distance: race.distance, venueCode: race.venueCode,
+      trackCondition: race.baba,
       raceClass: race.raceClass, classLevel: PF.raceClassLevel(race.raceClass),
       waku: e.waku, weight: e.weight, timeSec: e.timeSec, timeDiffSec: e.timeDiffSec,
       speedFigure: e.speedFigure ?? null,
@@ -432,6 +433,10 @@ async function main() {
             distanceChangeFit: r4(horses[i].distanceChangeFit, 5),
             surfaceSwitch: horses[i].surfaceSwitch,
             targetSurfaceFit: r4(horses[i].targetSurfaceFit, 5),
+            wetTrackRuns: horses[i].wetTrackRuns,
+            wetTrackTop3: horses[i].wetTrackTop3,
+            wetTrackFit: r4(horses[i].wetTrackFit, 5),
+            wetTrackDelta: r4(horses[i].wetTrackDelta, 5),
             classChange: r4(horses[i].classChange, 5),
             layoffLog: r4(horses[i].layoffLog, 5),
             secondUp: horses[i].secondUp,

@@ -21,6 +21,25 @@ test('surface switch and target-surface form are separate', () => {
   assert.strictEqual(f.surfaceSwitch, 1);
   assert.ok(f.targetSurfaceFit != null);
 });
+test('wet-track record is separated from good-track form on the same surface', () => {
+  const trackRuns = [
+    {rank: 1, field: 16, surface: '芝', trackCondition: '重'},
+    {rank: 3, field: 12, surface: '芝', trackCondition: '稍重'},
+    {rank: 12, field: 16, surface: '芝', trackCondition: '良'},
+    {rank: 2, field: 16, surface: 'ダ', trackCondition: '不良'},
+  ];
+  const f = CF.summarizeWetTrack(trackRuns, '芝');
+  assert.strictEqual(f.wetTrackRuns, 2);
+  assert.strictEqual(f.wetTrackTop3, 2);
+  assert.ok(f.wetTrackFit > 0.5);
+  assert.ok(f.wetTrackDelta > 0);
+});
+test('track-condition labels and JRA codes are normalized', () => {
+  assert.strictEqual(CF.normalizeTrackCondition('稍 重'), '稍重');
+  assert.strictEqual(CF.normalizeTrackCondition(3), '重');
+  assert.strictEqual(CF.normalizeTrackCondition('不良'), '不良');
+  assert.strictEqual(CF.normalizeTrackCondition(''), null);
+});
 test('second-up is detected after a 60-day-plus prior break', () => {
   const f = CF.summarizeConditions(runs, {date: '2026-06-22', surface: '芝', distance: 1600, venueCode: '05', classLevel: 2, field: 16, waku: 1});
   assert.strictEqual(f.secondUp, 1);
@@ -34,6 +53,8 @@ test('empty history returns safe missing values', () => {
   const f = CF.summarizeConditions([], {date: '2026-06-22', surface: '芝', distance: 1600, field: 16, waku: 1});
   assert.strictEqual(f.distanceDelta, null);
   assert.strictEqual(f.runningStyle, null);
+  assert.strictEqual(f.wetTrackRuns, 0);
+  assert.strictEqual(f.wetTrackFit, null);
   assert.strictEqual(f.weightDelta, null);
 });
 test('weight delta compares announced weight with the last valid run', () => {

@@ -290,7 +290,8 @@ function parseCareer(html, venue, surface, distance, untilTs, raceContext) {
     return i >= 0 ? i : fallback;
   };
   const dateCol = col('日付', 0), venueCol = col('開催', 1), raceNameCol = col('レース名', 4);
-  const rankCol = col('着順', 11), distanceCol = col('距離', 14), marginCol = col('着差', 18);
+  const rankCol = col('着順', 11), distanceCol = col('距離', 14);
+  const trackConditionCol = col('馬場', 15), marginCol = col('着差', 18);
   const cutoff = (untilTs || Date.now()) - 10 * 365.25 * 86400 * 1000;
   const s = {n: 0, w: 0, p3: 0, fitN: 0, fitW: 0, fitP3: 0, venueN: 0, venueP3: 0};
   const performanceRuns = [];
@@ -329,6 +330,7 @@ function parseCareer(html, venue, surface, distance, untilTs, raceContext) {
       corner1: parseInt((cells[17] || '').match(/\d+/)?.[0], 10) || null,
       timeDiffSec,
       distance: dm ? parseInt(dm[2], 10) : null,
+      trackCondition: CF.normalizeTrackCondition(cells[trackConditionCol]),
       raceClass: cells[raceNameCol] || null,
     });
   }
