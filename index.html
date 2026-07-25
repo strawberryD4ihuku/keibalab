@@ -565,13 +565,10 @@
         <div class="card-title"><span class="step-badge">3</span>たまったデータから条件を分析</div>
         <div class="workflow-note">全員共通の検証データから結果を自動表示します。条件を変えたいときだけ再分析してください。見つかった候補は確定ルールではなく、上の事前判定で改めて確かめます。</div>
         <div style="display:flex;align-items:flex-end;gap:10px;flex-wrap:wrap">
-          <button class="btn-save" style="width:auto" id="grid-btn" onclick="runGridSearch()">🔄 条件を変えて再分析</button>
-          <div class="field" style="width:190px">
-            <label>基本の最低レース数（200以上を推奨）</label>
+          <div class="field" style="width:170px"><label>基本の最低レース数</label>
             <input type="number" id="grid-minn" value="200" min="30" step="50">
-            <span style="font-size:10px;color:var(--text3);margin-top:4px">配当のブレが大きい券種は、さらに多い件数を自動で必要とします</span>
           </div>
-          <div class="field" style="width:150px"><label>対象期間（昔の傾向が今も続くとは限りません）</label>
+          <div class="field" style="width:150px"><label>対象期間</label>
             <select id="grid-period">
               <option value="all">全期間</option>
               <option value="10">直近10年</option>
@@ -580,8 +577,10 @@
               <option value="1">直近1年</option>
             </select>
           </div>
+          <button class="btn-save" style="width:auto" id="grid-btn" onclick="runGridSearch()">🔄 条件を変えて再分析</button>
           <div id="grid-progress" class="progress-wrap"><div class="progress-track"><div class="progress-fill"></div></div><span class="progress-label"></span></div>
         </div>
+        <div style="font-size:11px;color:var(--text3);margin-top:8px;line-height:1.7">最低レース数は200以上を推奨します。配当のブレが大きい券種は、さらに多い件数を自動で必要とします。対象期間を短くすると昔の傾向を除けますが、そのぶん件数は減ります。</div>
         <div id="strategy-stats" style="font-size:11px;color:var(--text3);margin-top:6px"></div>
         <div id="saved-strategies"></div>
         <div id="strategy-out" style="margin-top:0.5rem"></div>
