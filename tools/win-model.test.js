@@ -237,6 +237,14 @@ test('22. 展開再生後はSTART線を消し左下に隊列を表示する', ()
   assert.ok(html.includes('id="sim-live-order"'), '左下の上位隊列表示がない');
 });
 
+test('23. 前向き検証の買い候補から対象レースを開ける', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+  assert.ok(html.includes('function renderForwardBuyCandidates('), '発走前の買い候補一覧がない');
+  assert.ok(html.includes('今日これからの買い候補'), '買えるレースの見出しがない');
+  assert.ok(html.includes('onclick="openForwardRace(this)"'), '買い候補から予想画面へ移動できない');
+  assert.ok(html.includes('race_time: raceTime'), '買い候補に発走時刻が保存されない');
+});
+
 // ---- index.html からスコアリング一式を抽出（jv-import.jsと同方式の簡易版）----
 function loadScoring(html) {
   const src = html.match(/<script>([\s\S]*?)<\/script>/)[1];

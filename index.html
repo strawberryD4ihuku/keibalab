@@ -209,6 +209,13 @@
   .tend-bar-bg { flex: 1; background: var(--bg3); border-radius: 100px; height: 6px; overflow: hidden; }
   .tend-bar { height: 100%; border-radius: 100px; background: var(--accent); }
   .tend-pct { width: 36px; text-align: right; font-size: 12px; color: var(--text2); }
+  .forward-buy-list { display: grid; gap: 8px; margin-bottom: 14px; }
+  .forward-buy-card { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; border: 1px solid rgba(62,207,142,.28); border-radius: var(--radius-sm); background: rgba(62,207,142,.06); }
+  .forward-buy-race { min-width: 0; }
+  .forward-buy-title { color: var(--text); font-size: 13px; font-weight: 700; }
+  .forward-buy-detail { margin-top: 2px; color: var(--text2); font-size: 11px; line-height: 1.55; }
+  .forward-open-btn { flex-shrink: 0; min-height: 34px; padding: 6px 11px; border: 1px solid var(--green); border-radius: var(--radius-sm); background: transparent; color: var(--green); font-size: 11px; font-weight: 600; cursor: pointer; }
+  .forward-open-btn:hover { color: #0a2a1a; background: var(--green); }
 
   /* Bets history */
   .bets-list { display: flex; flex-direction: column; gap: 8px; }
@@ -289,6 +296,8 @@
     .sim-live-leader { font-size: 10px; }
     .sim-caption { align-items: flex-start; }
     .sim-metrics { grid-template-columns:1fr 1fr; }
+    .forward-buy-card { align-items: stretch; flex-direction: column; }
+    .forward-open-btn { width: 100%; min-height: 40px; }
     .toast { left: 12px; right: 12px; bottom: calc(70px + env(safe-area-inset-bottom)); text-align: center; }
   }
 </style>
@@ -2213,13 +2222,14 @@ function storeForwardPrediction(p) {
 }
 async function syncForwardPrediction(p) {
   if (!currentUser) return;
+  const signals = {...(p.signals || {}), race_time: p.race_time || p.signals?.race_time || null};
   const row = {
     snapshot_key: forwardSnapshotKey(p), race_id: p.race_id, strategy: p.strategy,
     model_version: p.model_version, race_date: p.race_date, venue: p.venue,
     race_num: p.race_num, race_name: p.race_name,
     odds_time: p.odds_time, decision: p.decision, bet_type: p.bet_type,
     picks: p.picks || [], invest: p.invest || 0, horse: p.horse || null,
-    signals: p.signals || {}, recorder: currentUser.id,
+    signals, recorder: currentUser.id,
   };
   const {error} = await sb.from('forward_predictions').insert(row);
   if (error && !/duplicate key|already exists/i.test(error.message)) console.warn('前向き予測の同期失敗:', error.message);
@@ -2254,6 +2264,7 @@ async function loadForwardLedgerFromSupabase() {
 
 function buildForwardPredictions(scored, oddsTime, betHorses = scored) {
   const raceDate = document.getElementById('race-date').value;
+  const raceTime = selectedRaceTime();
   const wetTrackHorses = scored.map(h => ({
     num: h.num,
     runs: h.wetTrackRuns ?? 0,
@@ -2266,7 +2277,7 @@ function buildForwardPredictions(scored, oddsTime, betHorses = scored) {
     venue: document.getElementById('venue').value,
     race_num: parseInt(document.getElementById('race-num').value),
     race_name: document.getElementById('race-name').value,
-    recorded_at: new Date().toISOString(), odds_time: oddsTime || null,
+    recorded_at: new Date().toISOString(), odds_time: oddsTime || null, race_time: raceTime,
   };
   const ranked = rankForBet(betHorses, BET_CONFIG['馬連']);
   const axis = ranked[0] || null;
@@ -2366,6 +2377,7 @@ function renderForwardSummary() {
   const predictions = forwardEntries(FORWARD_PRED_PREFIX);
   const results = new Map(forwardEntries(FORWARD_RESULT_PREFIX).map(r => [`${r.race_id}:${r.strategy}:${r.model_version}`, r]));
   if (!predictions.length) { el.innerHTML = '<div class="empty">記録はまだありません。次の開催日のオッズ発売後・レース発走前に記録できます。</div>'; return; }
+  const candidateHtml = renderForwardBuyCandidates(predictions, results);
   const rows = Object.keys(FORWARD_LABELS).map(strategy => {
     const ps = predictions.filter(p => p.strategy === strategy);
     const buys = ps.filter(p => p.decision === 'buy');
@@ -2374,8 +2386,75 @@ function renderForwardSummary() {
     const hits = settled.filter(r => r.hit).length;
     return `<tr><td>${esc(FORWARD_LABELS[strategy])}</td><td>${ps.length}</td><td>${buys.length}</td><td>${settled.length}</td><td>${settled.length ? (hits / settled.length * 100).toFixed(1) + '%' : '–'}</td><td>${invest ? (ret / invest * 100).toFixed(1) + '%' : '–'}</td><td>${buys.length - settled.length}</td></tr>`;
   }).join('');
-  el.innerHTML = `<div style="font-weight:700;margin-bottom:6px">これまでのテスト成績</div><div class="table-wrap"><table><thead><tr><th>方針</th><th>判定したレース</th><th>買い候補</th><th>結果確定</th><th>的中率</th><th>回収率</th><th>結果待ち</th></tr></thead><tbody>${rows}</tbody></table></div>
+  el.innerHTML = `${candidateHtml}<div style="font-weight:700;margin-bottom:6px">これまでのテスト成績</div><div class="table-wrap"><table><thead><tr><th>方針</th><th>判定したレース</th><th>買い候補</th><th>結果確定</th><th>的中率</th><th>回収率</th><th>結果待ち</th></tr></thead><tbody>${rows}</tbody></table></div>
     <div class="kaime-note">発走前に保存した判定は、あとから変更しません。結果はレース終了後に自動集計します。</div>`;
+}
+
+function forwardRaceTime(p) {
+  if (p.race_time || p.signals?.race_time) return p.race_time || p.signals.race_time;
+  if (p.race_date !== selectedForwardDate()) return null;
+  const venue = venueInfo.find(v => v.venue === p.venue);
+  return venue?.races?.find(r => Number(r.num) === Number(p.race_num))?.time || null;
+}
+
+function renderForwardBuyCandidates(predictions, results, now = new Date()) {
+  const today = fmtDateStr(now);
+  const groups = new Map();
+  predictions.filter(p => {
+    if (p.decision !== 'buy' || p.race_date < today) return false;
+    if (results.has(`${p.race_id}:${p.strategy}:${p.model_version}`)) return false;
+    const time = forwardRaceTime(p);
+    if (p.race_date === today && time) {
+      const [hour, minute] = time.split(':').map(Number);
+      if (hour * 60 + minute <= now.getHours() * 60 + now.getMinutes()) return false;
+    }
+    return true;
+  }).forEach(p => {
+    if (!groups.has(p.race_id)) groups.set(p.race_id, []);
+    groups.get(p.race_id).push(p);
+  });
+  const races = [...groups.values()].sort((a, b) => {
+    const x = a[0], y = b[0];
+    return x.race_date.localeCompare(y.race_date)
+      || String(forwardRaceTime(x) || '99:99').localeCompare(String(forwardRaceTime(y) || '99:99'))
+      || String(x.venue).localeCompare(String(y.venue))
+      || Number(x.race_num) - Number(y.race_num);
+  });
+  if (!races.length) return '<div class="axis-desc" style="margin-bottom:12px">現在、発走前の買い候補はありません。</div>';
+  const cards = races.map(items => {
+    const p = items[0], time = forwardRaceTime(p);
+    const details = items.map(item => {
+      const bet = item.strategy === 'stable'
+        ? `${item.bet_type} ${item.picks.map(x => x[0] + '番').join('・')}`
+        : `${item.bet_type} ${item.horse?.num || item.picks?.[0]?.[0] || '—'}番${item.horse?.name ? ' ' + item.horse.name : ''}`;
+      return `${FORWARD_LABELS[item.strategy]}：${bet}`;
+    }).join(' ／ ');
+    return `<div class="forward-buy-card">
+      <div class="forward-buy-race">
+        <div class="forward-buy-title">${esc(p.race_date)}　${esc(p.venue)} ${Number(p.race_num)}R${time ? ` ${esc(time)}発走` : ''}　${esc(p.race_name || '')}</div>
+        <div class="forward-buy-detail">${esc(details)}</div>
+      </div>
+      <button class="forward-open-btn" data-date="${esc(p.race_date)}" data-venue="${esc(p.venue)}" data-num="${Number(p.race_num)}" onclick="openForwardRace(this)">このレースを見る</button>
+    </div>`;
+  }).join('');
+  return `<div style="font-weight:700;margin-bottom:6px">今日これからの買い候補</div><div class="forward-buy-list">${cards}</div>`;
+}
+
+async function openForwardRace(button) {
+  const date = button?.dataset?.date;
+  const venue = button?.dataset?.venue;
+  const num = Number(button?.dataset?.num);
+  if (!date || !venue || !num) return;
+  showPage('yoso');
+  const dateSelect = document.getElementById('race-date');
+  dateSelect.value = date;
+  await loadVenues();
+  document.getElementById('venue').value = venue;
+  applyMainRace();
+  document.getElementById('race-num').value = `${num}R`;
+  applyRaceSelection();
+  window.scrollTo({top: 0, behavior: 'smooth'});
+  await fetchRaceData();
 }
 
 let forwardBatchRunning = false;
