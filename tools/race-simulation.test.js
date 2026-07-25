@@ -68,6 +68,24 @@ test('標準ペースで序盤先頭馬が勝ち続ける偏りを抑える', ()
   assert.ok(leaderWins / races < 0.14, `序盤先頭馬の勝率が高すぎる: ${leaderWins}/${races}`);
 });
 
+test('高い先行持続力を持つ逃げ馬はハイペースでも残れる', () => {
+  const custom = [
+    {num: 1, name: '強い逃げ', score: 50, runningStyle: '逃げ', frontStamina: 0.98},
+    {num: 2, name: '弱い逃げ', score: 50, runningStyle: '逃げ', frontStamina: 0.10},
+  ];
+  const plan = Sim.createPlan(custom, 'high').map(h => ({...h, finishBias: 0}));
+  assert.ok(Sim.progressFor(plan[0], 1) > Sim.progressFor(plan[1], 1));
+});
+
+test('高い末脚突破力を持つ差し馬はスローペースでも伸びる', () => {
+  const custom = [
+    {num: 1, name: '豪脚差し', score: 50, runningStyle: '差し', closingPower: 0.98},
+    {num: 2, name: '普通差し', score: 50, runningStyle: '差し', closingPower: 0.20},
+  ];
+  const plan = Sim.createPlan(custom, 'slow').map(h => ({...h, finishBias: 0}));
+  assert.ok(Sim.progressFor(plan[0], 1) > Sim.progressFor(plan[1], 1));
+});
+
 test('途中順位を進行度順で返す', () => {
   const ranked = Sim.rankAt(Sim.createPlan(horses, 'standard'), 0.8);
   assert.strictEqual(ranked.length, horses.length);

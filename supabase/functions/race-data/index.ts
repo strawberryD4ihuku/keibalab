@@ -26,6 +26,7 @@ interface CareerStats {
   layoffLog: number | null; secondUp: number | null;
   gatePosition: number | null; runningStyle: number | null;
   gateStyleInteraction: number | null; courseStyleFit: number | null;
+  frontStamina: number | null; closingPower: number | null;
 }
 
 interface Horse {
@@ -76,6 +77,7 @@ function summarizePerformance(runs: Array<{timeDiffSec: number | null; distance:
 
 type ConditionRun = {date: string; rank: number; field: number | null; surface: string | null; distance: number | null;
   venueCode: string | null; classLevel: number | null; corner1: number | null; trackCondition: string | null};
+type SimulationRun = ConditionRun & {cornerLast: number | null; agari: number | null};
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 function normalizeTrackCondition(value: unknown) {
   const s = String(value == null ? "" : value).replace(/\s+/g, "");
@@ -94,6 +96,43 @@ function runningStyle(runs: ConditionRun[]) {
     sum += clamp(1 - (Number(r.corner1) - 1) / (Number(r.field) - 1), 0, 1) * w; weight += w;
   });
   return weight ? sum / weight : null;
+}
+function summarizeSimulationAbilities(runs: SimulationRun[]) {
+  const recent = runs.slice(0, 10);
+  let frontSum = 1.5, frontWeight = 3;
+  let closingSum = 1.5, closingWeight = 3;
+  recent.forEach((r, i) => {
+    const field = Number(r.field), finish = Number(r.rank);
+    if (!(field > 1) || !(finish > 0)) return;
+    const recency = (recent.length - i) / recent.length;
+    const finishFront = clamp(1 - (finish - 1) / (field - 1), 0, 1);
+    const first = Number(r.corner1);
+    if (first > 0) {
+      const earlyFront = clamp(1 - (first - 1) / (field - 1), 0, 1);
+      if (earlyFront >= 0.55) {
+        const hold = clamp(0.5 + (finishFront - earlyFront) * 1.2, 0, 1);
+        const weight = recency * Math.pow(earlyFront, 1.5);
+        frontSum += (finishFront * 0.7 + hold * 0.3) * weight;
+        frontWeight += weight;
+      }
+    }
+    const last = Number(r.cornerLast || r.corner1);
+    if (last > 0) {
+      const lateFront = clamp(1 - (last - 1) / (field - 1), 0, 1);
+      if (lateFront <= 0.65) {
+        const gain = clamp(0.5 + (finishFront - lateFront) * 1.6, 0, 1);
+        const agari = Number(r.agari);
+        const speed = agari > 0 ? clamp((38 - agari) / 5, 0, 1) : 0.5;
+        const weight = recency * Math.pow(1 - lateFront, 1.2);
+        closingSum += (gain * 0.75 + speed * 0.25) * weight;
+        closingWeight += weight;
+      }
+    }
+  });
+  return {
+    frontStamina: frontWeight > 3 ? frontSum / frontWeight : null,
+    closingPower: closingWeight > 3 ? closingSum / closingWeight : null,
+  };
 }
 function summarizeConditions(runs: ConditionRun[], current: {date: string; surface: string | null; distance: number | null;
   venueCode: string; classLevel: number | null; field: number; waku: number; maxWaku: number}) {
@@ -343,8 +382,10 @@ function parseCareer(html: string, venue: string, surface: string | null, distan
     marginForm: null, classLevel: null, distanceDelta: null, distanceChangeFit: null,
     surfaceSwitch: null, targetSurfaceFit: null, wetTrackRuns: 0, wetTrackTop3: 0,
     wetTrackFit: null, wetTrackDelta: null, classChange: null, layoffLog: null, secondUp: null,
-    gatePosition: null, runningStyle: null, gateStyleInteraction: null, courseStyleFit: null};
-  const performanceRuns: Array<ConditionRun & {timeDiffSec: number | null; raceClass: string | null}> = [];
+    gatePosition: null, runningStyle: null, gateStyleInteraction: null, courseStyleFit: null,
+    frontStamina: null, closingPower: null};
+  const performanceRuns: Array<SimulationRun & {timeDiffSec: number | null; raceClass: string | null}> = [];
+  const cornerCol = col("通過", 17), agariCol = col("上り", 19);
   for (const m of rows) {
     const cells = [...m[0].matchAll(/<td[^>]*>([\s\S]*?)<\/td>/g)]
       .map((c) => clean(c[1]));
@@ -368,11 +409,13 @@ function parseCareer(html: string, venue: string, surface: string | null, distan
       if (rank <= 3) s.venueP3++;
     }
     const marginText = cells[marginCol] || "";
+    const corners = (cells[cornerCol] || "").match(/\d+/g)?.map(Number).filter((n) => n > 0) || [];
     performanceRuns.push({
       date: cells[dateCol].replace(/\//g, "-"), rank, field: parseInt(cells[6], 10) || null,
       surface: dm ? dm[1] : null, venueCode: venue && cells[venueCol].includes(venue) ? venue : (cells[venueCol] || null),
       classLevel: raceClassLevel(cells[raceNameCol] || null),
-      corner1: parseInt((cells[17] || "").match(/\d+/)?.[0] || "") || null,
+      corner1: corners[0] || null, cornerLast: corners[corners.length - 1] || null,
+      agari: parseFloat(cells[agariCol]) || null,
       timeDiffSec: /^[-+]?\d+(?:\.\d+)?$/.test(marginText) ? Number(marginText) : null,
       distance: dm ? parseInt(dm[2], 10) : null,
       trackCondition: normalizeTrackCondition(cells[trackConditionCol]),
@@ -381,6 +424,7 @@ function parseCareer(html: string, venue: string, surface: string | null, distan
   }
   Object.assign(s, summarizePerformance(performanceRuns));
   Object.assign(s, summarizeConditions(performanceRuns, {...raceContext, surface, distance}));
+  Object.assign(s, summarizeSimulationAbilities(performanceRuns));
   return s;
 }
 

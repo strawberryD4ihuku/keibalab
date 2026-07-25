@@ -1280,7 +1280,13 @@ function prepareRaceSimulation() {
   const entries = horses.map(h => {
     const rs = h.career?.runningStyle;
     const runningStyle = rs == null ? null : rs >= .78 ? '逃げ' : rs >= .55 ? '先行' : rs >= .28 ? '差し' : '追込';
-    return {...h, score: computeScore(h), runningStyle};
+    return {
+      ...h,
+      score: computeScore(h),
+      runningStyle,
+      frontStamina: h.career?.frontStamina ?? null,
+      closingPower: h.career?.closingPower ?? null,
+    };
   });
   simulationPlan = RaceSimulation.createPlan(entries, simulationPace);
   simulationCourse = RaceCourse.getProfile(
@@ -1300,7 +1306,8 @@ function prepareRaceSimulation() {
   const layer = document.getElementById('sim-marker-layer');
   layer.innerHTML = simulationPlan.map(h => {
     const color = WAKU_COLORS[h.waku] || {bg: '#4f8ef7', fg: '#fff'};
-    return `<div class="sim-horse" data-num="${h.num}" title="${h.num}番 ${esc(h.name)}（${h.style}想定）" style="background:${color.bg};color:${color.fg}">${h.num}</div>`;
+    const ability = simulationAbilityLabel(h);
+    return `<div class="sim-horse" data-num="${h.num}" title="${h.num}番 ${esc(h.name)}（${h.style}想定${ability ? '・' + ability : ''}）" style="background:${color.bg};color:${color.fg}">${h.num}</div>`;
   }).join('');
   const conditionText = `${simulationWeather === 'rain' ? '雨' : simulationWeather === 'cloudy' ? '曇' : '晴'}・${simulationTrackCondition}馬場`;
   document.getElementById('sim-comment').textContent = `${conditionText}、${simulationPaceLabel(simulationPace)}想定。「展開を見る」を押してください。`;
@@ -1581,8 +1588,15 @@ function updateSimulationComment(progress) {
 function renderSimulationResult() {
   const ranked = RaceSimulation.rankAt(simulationPlan, 1);
   document.getElementById('sim-result').innerHTML = ranked.slice(0, 5).map((h, i) =>
-    `<span class="sim-result-chip"><span class="sim-rank">${i + 1}位想定</span> ${h.num}番 ${esc(h.name)} <span style="color:var(--text3)">${h.style}</span></span>`
+    `<span class="sim-result-chip"><span class="sim-rank">${i + 1}位想定</span> ${h.num}番 ${esc(h.name)} <span style="color:var(--text3)">${h.style}${simulationAbilityLabel(h) ? '・' + simulationAbilityLabel(h) : ''}</span></span>`
   ).join('');
+}
+
+function simulationAbilityLabel(h) {
+  if (h.style === '逃げ' || h.style === '先行') {
+    return h.frontStamina == null ? '' : `持続力${Math.round(h.frontStamina * 100)}`;
+  }
+  return h.closingPower == null ? '' : `末脚${Math.round(h.closingPower * 100)}`;
 }
 
 // Axis
