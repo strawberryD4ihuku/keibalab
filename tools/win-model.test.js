@@ -229,6 +229,14 @@ test('21. 前向き検証に全馬の道悪巧拙データを保存する', () =
   assert.ok(html.includes("wetTrackFit: '道悪での走り'"), '道悪特徴量の説明がない');
 });
 
+test('22. 展開再生後はSTART線を消し左下に隊列を表示する', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+  assert.ok(html.includes('if (simulationStartLineVisible)'), 'START線の表示制御がない');
+  assert.ok(html.includes('simulationStartLineVisible = false'), '再生後もSTART線が残る');
+  assert.ok(html.includes('id="sim-live-leader"'), '左下の先頭表示がない');
+  assert.ok(html.includes('id="sim-live-order"'), '左下の上位隊列表示がない');
+});
+
 // ---- index.html からスコアリング一式を抽出（jv-import.jsと同方式の簡易版）----
 function loadScoring(html) {
   const src = html.match(/<script>([\s\S]*?)<\/script>/)[1];

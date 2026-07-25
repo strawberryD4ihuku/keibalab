@@ -37,6 +37,15 @@ test('ハイペースは追込馬、スローは逃げ馬の終盤を相対的�
   assert.ok(highGap > slowGap);
 });
 
+test('標準ペースでは同能力の逃げ馬より差し追込馬が終盤に伸びる', () => {
+  const custom = [
+    {num: 1, name: '逃げ', score: 50, runningStyle: '逃げ'},
+    {num: 2, name: '追込', score: 50, runningStyle: '追込'},
+  ];
+  const plan = Sim.createPlan(custom, 'standard').map(h => ({...h, finishBias: 0}));
+  assert.ok(Sim.progressFor(plan[1], 1) > Sim.progressFor(plan[0], 1));
+});
+
 test('途中順位を進行度順で返す', () => {
   const ranked = Sim.rankAt(Sim.createPlan(horses, 'standard'), 0.8);
   assert.strictEqual(ranked.length, horses.length);

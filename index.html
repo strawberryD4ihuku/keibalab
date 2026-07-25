@@ -156,6 +156,10 @@
   .sim-marker-layer { position: absolute; inset: 0; }
   .sim-horse { position: absolute; width: 22px; height: 22px; margin: -11px 0 0 -11px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 800; border: 1.5px solid rgba(255,255,255,0.9); box-shadow: 0 2px 7px rgba(0,0,0,0.55); z-index: 4; will-change: left, top; }
   .sim-horse.leader { box-shadow: 0 0 0 3px rgba(240,192,64,0.45), 0 2px 7px rgba(0,0,0,0.55); }
+  .sim-live-panel { position: absolute; left: 11px; bottom: 11px; z-index: 30; min-width: 190px; max-width: 270px; padding: 8px 10px; border: 1px solid rgba(255,255,255,.16); border-radius: 8px; background: rgba(12,17,24,.78); box-shadow: 0 5px 18px rgba(0,0,0,.24); backdrop-filter: blur(5px); pointer-events: none; }
+  .sim-live-label { color: var(--gold); font-size: 9px; font-weight: 700; letter-spacing: .08em; }
+  .sim-live-leader { display: block; margin-top: 1px; color: #fff; font-size: 12px; line-height: 1.35; }
+  .sim-live-order { margin-top: 2px; color: rgba(255,255,255,.65); font-size: 9px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .sim-caption { display: flex; justify-content: space-between; gap: 12px; align-items: center; min-height: 40px; padding: 8px 10px; margin-top: 8px; border-radius: var(--radius-sm); background: var(--bg3); }
   .sim-comment { color: var(--text); font-size: 12px; }
   .sim-phase { flex-shrink: 0; font-size: 11px; color: var(--gold); }
@@ -281,6 +285,8 @@
     .sim-action { flex: 1; min-width: 88px; }
     .sim-stage { min-height: 190px; aspect-ratio: 1.65 / 1; }
     .sim-horse { width: 20px; height: 20px; margin: -10px 0 0 -10px; font-size: 9px; }
+    .sim-live-panel { left: 7px; bottom: 7px; min-width: 150px; max-width: 62%; padding: 6px 8px; }
+    .sim-live-leader { font-size: 10px; }
     .sim-caption { align-items: flex-start; }
     .sim-metrics { grid-template-columns:1fr 1fr; }
     .toast { left: 12px; right: 12px; bottom: calc(70px + env(safe-area-inset-bottom)); text-align: center; }
@@ -412,6 +418,11 @@
             <div class="sim-stage" id="sim-stage" aria-label="俯瞰コース上の展開シミュレーション">
               <canvas class="sim-track-canvas" id="sim-track-canvas"></canvas>
               <div class="sim-marker-layer" id="sim-marker-layer"></div>
+              <div class="sim-live-panel" aria-live="polite">
+                <div class="sim-live-label">先頭</div>
+                <strong class="sim-live-leader" id="sim-live-leader">発走前</strong>
+                <div class="sim-live-order" id="sim-live-order">上位の隊列をここに表示します</div>
+              </div>
             </div>
             <div class="sim-caption" aria-live="polite">
               <div class="sim-comment" id="sim-comment">ペースを選んで「展開を見る」を押してください。</div>
@@ -625,6 +636,7 @@ let simulationPath = null;
 let simulationFinishSeconds = 0;
 let simulationDisplayProgress = new Map();
 let simulationDisplayLane = new Map();
+let simulationStartLineVisible = true;
 const SIMULATION_DURATION_MS = 20000;
 let simulationWeather = 'sunny';
 let simulationTrackCondition = '良';
@@ -1245,6 +1257,7 @@ function prepareRaceSimulation() {
   simulationStartedAt = null;
   simulationElapsed = 0;
   simulationProgress = 0;
+  simulationStartLineVisible = true;
   simulationPlan = [];
 
   const available = horses.length > 0 && window.RaceSimulation && window.RaceCourse;
@@ -1292,6 +1305,8 @@ function prepareRaceSimulation() {
   document.getElementById('sim-clock').textContent = '0.0秒';
   document.getElementById('sim-remaining').textContent = `${currentRaceDistance || '—'}m`;
   document.getElementById('sim-finish-time').textContent = RaceCourse.formatTime(simulationFinishSeconds) + '目安';
+  document.getElementById('sim-live-leader').textContent = '発走前';
+  document.getElementById('sim-live-order').textContent = '上位の隊列をここに表示します';
   requestAnimationFrame(() => {
     drawSimulationCourse();
     positionSimulationHorses(0);
@@ -1345,6 +1360,10 @@ function runSimulationFrame(timestamp) {
   if (simulationStartedAt == null) simulationStartedAt = timestamp - simulationElapsed;
   simulationElapsed = timestamp - simulationStartedAt;
   simulationProgress = Math.min(1, simulationElapsed / SIMULATION_DURATION_MS);
+  if (simulationStartLineVisible && simulationProgress > .02) {
+    simulationStartLineVisible = false;
+    drawSimulationCourse();
+  }
   positionSimulationHorses(simulationProgress);
   updateSimulationComment(simulationProgress);
   if (simulationProgress >= 1) {
@@ -1407,6 +1426,12 @@ function positionSimulationHorses(progress) {
 
   document.getElementById('sim-clock').textContent = RaceCourse.formatTime(simulationFinishSeconds * progress);
   document.getElementById('sim-remaining').textContent = `${Math.max(0, Math.round(distance * (1-progress) / 10) * 10)}m`;
+  document.getElementById('sim-live-leader').textContent =
+    leaderNum ? `${leaderNum}番 ${ranked[0].name}` : '発走前';
+  document.getElementById('sim-live-order').textContent =
+    progress > 0
+      ? `上位 ${ranked.slice(0, 4).map(h => h.num + '番').join(' − ')}`
+      : '上位の隊列をここに表示します';
 }
 
 function simulationCourseFraction(raceProgress) {
@@ -1471,7 +1496,9 @@ function drawSimulationCourse() {
   }
 
   drawLineAt(0,'#fff','GOAL');
-  drawLineAt(simulationCourseFraction(0),'#72d5ff','START',trackWidth*.48);
+  if (simulationStartLineVisible) {
+    drawLineAt(simulationCourseFraction(0),'#72d5ff','START',trackWidth*.48);
+  }
   const maxMarker = Math.min(Number(currentRaceDistance)||1600, simulationCourse.lap)-200;
   const sign = simulationCourse.direction === 'left' ? -1 : 1;
   const startFraction = simulationCourseFraction(0);
