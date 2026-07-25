@@ -46,6 +46,28 @@ test('標準ペースでは同能力の逃げ馬より差し追込馬が終盤�
   assert.ok(Sim.progressFor(plan[1], 1) > Sim.progressFor(plan[0], 1));
 });
 
+test('序盤の位置取り乱数と終盤の伸び乱数を分離する', () => {
+  const plan = Sim.createPlan(horses, 'standard');
+  assert.ok(plan.every(h => h.seed !== h.finishSeed));
+});
+
+test('標準ペースで序盤先頭馬が勝ち続ける偏りを抑える', () => {
+  let leaderWins = 0;
+  const races = 500;
+  for (let race = 0; race < races; race++) {
+    const field = Array.from({length: 18}, (_, i) => ({
+      num: i + 1,
+      name: `race-${race}-horse-${i}`,
+      score: 35 + ((race * 17 + i * 13) % 45),
+      age3f: 33.5 + ((race * 7 + i * 11) % 40) / 10,
+    }));
+    const plan = Sim.createPlan(field, 'standard');
+    const earlyLeader = Sim.rankAt(plan, 0.18)[0].num;
+    if (Sim.rankAt(plan, 1)[0].num === earlyLeader) leaderWins++;
+  }
+  assert.ok(leaderWins / races < 0.14, `序盤先頭馬の勝率が高すぎる: ${leaderWins}/${races}`);
+});
+
 test('途中順位を進行度順で返す', () => {
   const ranked = Sim.rankAt(Sim.createPlan(horses, 'standard'), 0.8);
   assert.strictEqual(ranked.length, horses.length);
