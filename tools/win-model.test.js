@@ -245,6 +245,14 @@ test('23. 前向き検証の買い候補から対象レースを開ける', () =
   assert.ok(html.includes('race_time: raceTime'), '買い候補に発走時刻が保存されない');
 });
 
+test('24. ゴール板を表示しGOAL線は終盤まで隠す', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+  assert.ok(html.includes('function drawGoalPost()'), '競馬場らしいゴール板がない');
+  assert.ok(html.includes('simulationGoalLineVisible = false'), '発走前からGOAL線が表示される');
+  assert.ok(html.includes('simulationProgress >= .78'), 'GOAL線を終盤に表示する制御がない');
+  assert.ok(html.includes("if (simulationGoalLineVisible) drawLineAt(0,'#fff','GOAL')"), 'GOAL線が常時表示される');
+});
+
 // ---- index.html からスコアリング一式を抽出（jv-import.jsと同方式の簡易版）----
 function loadScoring(html) {
   const src = html.match(/<script>([\s\S]*?)<\/script>/)[1];

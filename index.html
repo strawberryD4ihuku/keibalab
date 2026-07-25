@@ -645,6 +645,7 @@ let simulationFinishSeconds = 0;
 let simulationDisplayProgress = new Map();
 let simulationDisplayLane = new Map();
 let simulationStartLineVisible = true;
+let simulationGoalLineVisible = false;
 const SIMULATION_DURATION_MS = 20000;
 let simulationWeather = 'sunny';
 let simulationTrackCondition = '良';
@@ -1266,6 +1267,7 @@ function prepareRaceSimulation() {
   simulationElapsed = 0;
   simulationProgress = 0;
   simulationStartLineVisible = true;
+  simulationGoalLineVisible = false;
   simulationPlan = [];
 
   const available = horses.length > 0 && window.RaceSimulation && window.RaceCourse;
@@ -1377,6 +1379,10 @@ function runSimulationFrame(timestamp) {
   simulationProgress = Math.min(1, simulationElapsed / SIMULATION_DURATION_MS);
   if (simulationStartLineVisible && simulationProgress > .02) {
     simulationStartLineVisible = false;
+    drawSimulationCourse();
+  }
+  if (!simulationGoalLineVisible && simulationProgress >= .78) {
+    simulationGoalLineVisible = true;
     drawSimulationCourse();
   }
   positionSimulationHorses(simulationProgress);
@@ -1510,7 +1516,38 @@ function drawSimulationCourse() {
     }
   }
 
-  drawLineAt(0,'#fff','GOAL');
+  function drawGoalPost() {
+    const p = RaceCourse.pointAt(simulationPath, 0);
+    const edge = trackWidth * .78;
+    const x = p.x + p.nx * edge, y = p.y + p.ny * edge;
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(Math.atan2(p.ty, p.tx));
+    ctx.lineCap = 'round';
+    // 競馬場のゴール板を模した、コース側へ開く馬蹄形の標識。
+    ctx.beginPath();
+    ctx.moveTo(-7, -7);
+    ctx.lineTo(-7, 3);
+    ctx.quadraticCurveTo(-7, 11, 0, 11);
+    ctx.quadraticCurveTo(7, 11, 7, 3);
+    ctx.lineTo(7, -7);
+    ctx.strokeStyle = 'rgba(255,255,255,.95)';
+    ctx.lineWidth = 8;
+    ctx.stroke();
+    ctx.strokeStyle = '#6f3dc0';
+    ctx.lineWidth = 5;
+    ctx.stroke();
+    ctx.fillStyle = '#f0c040';
+    ctx.beginPath(); ctx.arc(0, 11, 2.4, 0, Math.PI * 2); ctx.fill();
+    ctx.font = '800 7px -apple-system, sans-serif';
+    ctx.fillStyle = '#fff';
+    ctx.textAlign = 'center';
+    ctx.fillText('GOAL', 0, 3);
+    ctx.restore();
+  }
+
+  if (simulationGoalLineVisible) drawLineAt(0,'#fff','GOAL');
+  drawGoalPost();
   if (simulationStartLineVisible) {
     drawLineAt(simulationCourseFraction(0),'#72d5ff','START',trackWidth*.48);
   }
