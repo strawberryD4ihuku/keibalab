@@ -311,6 +311,13 @@ test('30. 馬の性齢と選択レースへの外部導線を表示する', () =
   assert.ok(html.includes('race.netkeiba.com/race/shutuba.html?race_id=${id}'), '選択レースのnetkeiba出馬表へ移動できない');
 });
 
+test('31. 記事ボタンを馬名欄の右端に揃える', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+  assert.ok(html.includes('.horse-identity { position: relative;'), '記事ボタンの固定位置の基準がない');
+  assert.ok(html.includes('.horse-identity > .horse-info-links { position: absolute; right: 0;'), '記事ボタンが馬名や産駒名の長さでずれる');
+  assert.ok(html.includes('padding-right: 42px;'), '固定した記事ボタンと馬情報が重なる');
+});
+
 // ---- index.html からスコアリング一式を抽出（jv-import.jsと同方式の簡易版）----
 function loadScoring(html) {
   const src = html.match(/<script>([\s\S]*?)<\/script>/)[1];

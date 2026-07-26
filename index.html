@@ -246,13 +246,14 @@
   .bet-horses { font-size: 11px; color: var(--text3); white-space: nowrap; }
   .horse-link { color: var(--text); text-decoration: none; border-bottom: 1px dotted var(--text3); }
   .horse-link:hover { color: var(--accent); border-bottom-color: var(--accent); }
-  .horse-identity { display: flex; align-items: center; gap: 6px; min-width: max-content; }
+  .horse-identity { position: relative; display: flex; align-items: center; gap: 6px; min-width: max-content; padding-right: 42px; }
   .horse-sex { display: inline-flex; align-items: center; justify-content: center; min-width: 24px; height: 18px; padding: 0 4px; border-radius: 4px; font-size: 9px; font-weight: 700; line-height: 1; }
   .horse-sex-male { color: #82b5ff; background: rgba(79,142,247,.15); }
   .horse-sex-female { color: #ff9fbd; background: rgba(255,112,154,.14); }
   .horse-sex-gelding { color: var(--text2); background: var(--bg3); border: 1px solid var(--border); }
   .horse-sire { color: var(--gold); font-size: 10px; font-weight: 400; }
   .horse-info-links { display: inline-flex; align-items: center; gap: 4px; font-size: 9px; font-weight: 500; }
+  .horse-identity > .horse-info-links { position: absolute; right: 0; top: 50%; transform: translateY(-50%); }
   .horse-info-link { display: inline-flex; align-items: center; min-height: 20px; padding: 1px 6px; border: 1px solid var(--border); border-radius: 100px; color: var(--text2); text-decoration: none; background: var(--bg3); }
   .horse-info-link:hover { color: var(--accent); border-color: var(--accent); }
   .race-entry-table th { padding: 6px; }
