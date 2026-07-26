@@ -279,6 +279,17 @@ test('27. 1レースで買える8券種をまとめて比べて検証保存す�
   }
 });
 
+test('28. まとめ判定中のレース切替を止めて目的レースだけ表示する', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+  assert.ok(html.includes("if (page === 'yoso' && forwardBatchRunning)"), 'まとめ判定中も予想ページへ移れてしまう');
+  assert.ok(html.includes('forwardBatchCancelRequested = true'), '画面移動時にまとめ判定を停止できない');
+  assert.ok(html.includes('pendingForwardRace = {date, venue, num}'), '停止後に開く目的レースを保持していない');
+  const openStart = html.indexOf('async function openForwardRace(');
+  const openEnd = html.indexOf('\nlet forwardBatchRunning', openStart);
+  const openCode = html.slice(openStart, openEnd);
+  assert.ok(openCode.indexOf("showPage('yoso')") > openCode.indexOf('applyRaceSelection()'), '選択途中のレースが予想画面に見える');
+});
+
 // ---- index.html からスコアリング一式を抽出（jv-import.jsと同方式の簡易版）----
 function loadScoring(html) {
   const src = html.match(/<script>([\s\S]*?)<\/script>/)[1];
