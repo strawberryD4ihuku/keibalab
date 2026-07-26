@@ -216,6 +216,13 @@
   .forward-buy-detail { margin-top: 2px; color: var(--text2); font-size: 11px; line-height: 1.55; }
   .forward-open-btn { flex-shrink: 0; min-height: 34px; padding: 6px 11px; border: 1px solid var(--green); border-radius: var(--radius-sm); background: transparent; color: var(--green); font-size: 11px; font-weight: 600; cursor: pointer; }
   .forward-open-btn:hover { color: #0a2a1a; background: var(--green); }
+  .forward-history { margin-top: 14px; }
+  .forward-history-list { display: grid; gap: 7px; margin-top: 8px; }
+  .forward-history-card { display: grid; grid-template-columns: minmax(210px,1.25fr) minmax(160px,1fr) auto; gap: 10px; align-items: center; padding: 9px 11px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg3); }
+  .forward-history-race { color: var(--text); font-size: 12px; font-weight: 650; }
+  .forward-history-pick { margin-top: 2px; color: var(--text2); font-size: 11px; }
+  .forward-history-money { color: var(--text2); font-size: 11px; white-space: nowrap; }
+  .forward-history-status { min-width: 62px; text-align: right; font-size: 12px; font-weight: 700; }
 
   /* Bets history */
   .bets-list { display: flex; flex-direction: column; gap: 8px; }
@@ -298,6 +305,8 @@
     .sim-metrics { grid-template-columns:1fr 1fr; }
     .forward-buy-card { align-items: stretch; flex-direction: column; }
     .forward-open-btn { width: 100%; min-height: 40px; }
+    .forward-history-card { grid-template-columns: 1fr auto; }
+    .forward-history-money { grid-column: 1 / -1; }
     .toast { left: 12px; right: 12px; bottom: calc(70px + env(safe-area-inset-bottom)); text-align: center; }
   }
 </style>
@@ -2339,6 +2348,7 @@ function buildForwardPredictions(scored, oddsTime, betHorses = scored) {
     invest: stableBuy ? stableCombos.length * 100 : 0,
     signals: {
       field: betHorses.length, axis_num: axis?.num || null, axis_odds: Number(axis?.odds) || null,
+      pick_horses: stableBuy ? stablePicks.map(h => ({num: h.num, name: h.name, odds: Number(h.odds) || null})) : [],
       wet_track_schema: 1, wet_track_horses: wetTrackHorses,
     },
   }];
@@ -2348,7 +2358,8 @@ function buildForwardPredictions(scored, oddsTime, betHorses = scored) {
       const pick = candidates.find(x => x.expectedRoiPercent >= threshold) || null;
       predictions.push({...base, strategy, model_version: upsetModel.version || 'upset-model',
         decision: pick ? 'buy' : 'skip', bet_type: '単勝', picks: pick ? [[pick.num]] : [], invest: pick ? 100 : 0,
-        horse: pick, signals: {threshold, candidate_count: candidates.length},
+        horse: pick, signals: {threshold, candidate_count: candidates.length,
+          pick_horses: pick ? [{num: pick.num, name: pick.name, odds: pick.odds}] : []},
       });
     }
   }
@@ -2428,16 +2439,55 @@ function renderForwardSummary() {
   const results = new Map(forwardEntries(FORWARD_RESULT_PREFIX).map(r => [`${r.race_id}:${r.strategy}:${r.model_version}`, r]));
   if (!predictions.length) { el.innerHTML = '<div class="empty">記録はまだありません。次の開催日のオッズ発売後・レース発走前に記録できます。</div>'; return; }
   const candidateHtml = renderForwardBuyCandidates(predictions, results);
+  const historyHtml = renderForwardHistory(predictions, results);
   const rows = Object.keys(FORWARD_LABELS).map(strategy => {
     const ps = predictions.filter(p => p.strategy === strategy);
     const buys = ps.filter(p => p.decision === 'buy');
     const settled = buys.map(p => results.get(`${p.race_id}:${p.strategy}:${p.model_version}`)).filter(Boolean);
     const invest = settled.reduce((s, r) => s + r.invest, 0), ret = settled.reduce((s, r) => s + r.return_amount, 0);
     const hits = settled.filter(r => r.hit).length;
-    return `<tr><td>${esc(FORWARD_LABELS[strategy])}</td><td>${ps.length}</td><td>${buys.length}</td><td>${settled.length}</td><td>${settled.length ? (hits / settled.length * 100).toFixed(1) + '%' : '–'}</td><td>${invest ? (ret / invest * 100).toFixed(1) + '%' : '–'}</td><td>${buys.length - settled.length}</td></tr>`;
+    const money = settled.length ? `${invest.toLocaleString('ja-JP')}円 → ${ret.toLocaleString('ja-JP')}円` : '–';
+    return `<tr><td>${esc(FORWARD_LABELS[strategy])}</td><td>${ps.length}</td><td>${buys.length}</td><td>${settled.length}</td><td>${settled.length ? (hits / settled.length * 100).toFixed(1) + '%' : '–'}</td><td>${money}</td><td>${invest ? (ret / invest * 100).toFixed(1) + '%' : '–'}</td><td>${buys.length - settled.length}</td></tr>`;
   }).join('');
-  el.innerHTML = `${candidateHtml}<div style="font-weight:700;margin-bottom:6px">これまでのテスト成績</div><div class="table-wrap"><table><thead><tr><th>方針</th><th>判定したレース</th><th>買い候補</th><th>結果確定</th><th>的中率</th><th>回収率</th><th>結果待ち</th></tr></thead><tbody>${rows}</tbody></table></div>
-    <div class="kaime-note">発走前に保存した判定は、あとから変更しません。結果はレース終了後に自動集計します。</div>`;
+  el.innerHTML = `${candidateHtml}<div style="font-weight:700;margin-bottom:6px">これまでのテスト成績</div><div class="table-wrap"><table><thead><tr><th>方針</th><th>記録レース</th><th>買い候補</th><th>結果確定</th><th>的中率</th><th>投資 → 払戻</th><th>実回収率</th><th>結果待ち</th></tr></thead><tbody>${rows}</tbody></table></div>
+    <div class="kaime-note">実回収率は、結果が確定した買い候補の「払戻 ÷ 投資」です。結果待ちは含めません。発走前に保存した判定は、あとから変更しません。</div>${historyHtml}`;
+}
+
+function forwardPickLabel(p) {
+  const saved = Array.isArray(p.signals?.pick_horses) ? p.signals.pick_horses : [];
+  if (saved.length) return saved.map(h => `${h.num}番${h.name ? ' ' + h.name : ''}`).join('・');
+  if (p.horse) return `${p.horse.num}番${p.horse.name ? ' ' + p.horse.name : ''}`;
+  return (p.picks || []).map(x => `${x.join('-')}番`).join('・') || '候補不明';
+}
+
+function renderForwardHistory(predictions, results) {
+  const buys = predictions.filter(p => p.decision === 'buy').sort((a, b) =>
+    String(b.race_date).localeCompare(String(a.race_date))
+      || String(b.venue).localeCompare(String(a.venue))
+      || Number(b.race_num) - Number(a.race_num)
+      || String(a.strategy).localeCompare(String(b.strategy)));
+  if (!buys.length) return '';
+  const cards = buys.map(p => {
+    const key = `${p.race_id}:${p.strategy}:${p.model_version}`;
+    const r = results.get(key);
+    const invest = Number(r?.invest ?? p.invest) || 0;
+    const ret = Number(r?.return_amount) || 0;
+    const roi = r && invest ? (ret / invest * 100).toFixed(1) + '%' : '–';
+    const status = !r ? '結果待ち' : r.hit ? '的中' : 'ハズレ';
+    const statusClass = !r ? '' : r.hit ? 'bet-hit' : 'red';
+    const odds = Number(p.horse?.odds || p.signals?.pick_horses?.[0]?.odds);
+    const oddsText = Number.isFinite(odds) && odds > 0 ? `・記録時${odds.toFixed(1)}倍` : '';
+    const money = r
+      ? `${invest.toLocaleString('ja-JP')}円投資 → ${ret.toLocaleString('ja-JP')}円払戻（回収率${roi}）`
+      : `${invest.toLocaleString('ja-JP')}円投資・精算待ち`;
+    return `<div class="forward-history-card">
+      <div><div class="forward-history-race">${esc(p.race_date)}　${esc(p.venue || '')} ${Number(p.race_num)}R　${esc(p.race_name || '')}</div>
+        <div class="forward-history-pick">${esc(FORWARD_LABELS[p.strategy] || p.strategy)}・${esc(p.bet_type)}　${esc(forwardPickLabel(p))}${esc(oddsText)}</div></div>
+      <div class="forward-history-money">${esc(money)}</div>
+      <div class="forward-history-status ${statusClass}">${status}</div>
+    </div>`;
+  }).join('');
+  return `<details class="forward-history" open><summary class="report-toggle">買い候補の判定履歴（${buys.length}件）</summary><div class="forward-history-list">${cards}</div></details>`;
 }
 
 function forwardRaceTime(p) {

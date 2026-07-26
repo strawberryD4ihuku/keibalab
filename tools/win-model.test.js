@@ -258,6 +258,16 @@ test('25. スマホではコースを隠す左下の隊列パネルを消す', (
   assert.ok(html.includes('.sim-live-panel { display: none; }'), 'スマホでも左下の隊列パネルがコースを隠す');
 });
 
+test('26. 買い候補のレース・候補馬・当落・投資払戻を履歴表示する', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+  assert.ok(html.includes('function renderForwardHistory('), '買い候補の明細履歴がない');
+  assert.ok(html.includes('買い候補の判定履歴'), '買い候補履歴の見出しがない');
+  assert.ok(html.includes("r.hit ? '的中' : 'ハズレ'"), '候補ごとの当落が分からない');
+  assert.ok(html.includes('円投資 → ${ret.toLocaleString'), '投資額と払戻額の内訳がない');
+  assert.ok(html.includes('実回収率は、結果が確定した買い候補'), '回収率の計算対象が説明されていない');
+  assert.ok(html.includes('pick_horses:'), '今後の候補馬名が保存されない');
+});
+
 // ---- index.html からスコアリング一式を抽出（jv-import.jsと同方式の簡易版）----
 function loadScoring(html) {
   const src = html.match(/<script>([\s\S]*?)<\/script>/)[1];
