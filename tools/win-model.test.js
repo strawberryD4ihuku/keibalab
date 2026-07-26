@@ -253,6 +253,11 @@ test('24. ゴール板を表示しGOAL線は終盤まで隠す', () => {
   assert.ok(html.includes("if (simulationGoalLineVisible) drawLineAt(0,'#fff','GOAL')"), 'GOAL線が常時表示される');
 });
 
+test('25. スマホではコースを隠す左下の隊列パネルを消す', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+  assert.ok(html.includes('.sim-live-panel { display: none; }'), 'スマホでも左下の隊列パネルがコースを隠す');
+});
+
 // ---- index.html からスコアリング一式を抽出（jv-import.jsと同方式の簡易版）----
 function loadScoring(html) {
   const src = html.match(/<script>([\s\S]*?)<\/script>/)[1];

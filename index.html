@@ -292,8 +292,8 @@
     .sim-action { flex: 1; min-width: 88px; }
     .sim-stage { min-height: 190px; aspect-ratio: 1.65 / 1; }
     .sim-horse { width: 20px; height: 20px; margin: -10px 0 0 -10px; font-size: 9px; }
-    .sim-live-panel { left: 7px; bottom: 7px; min-width: 150px; max-width: 62%; padding: 6px 8px; }
-    .sim-live-leader { font-size: 10px; }
+    /* スマホではコースを隠すため、重複する左下の隊列パネルは表示しない。 */
+    .sim-live-panel { display: none; }
     .sim-caption { align-items: flex-start; }
     .sim-metrics { grid-template-columns:1fr 1fr; }
     .forward-buy-card { align-items: stretch; flex-direction: column; }
