@@ -31,7 +31,7 @@ interface CareerStats {
 
 interface Horse {
   num: number; waku: number; name: string; jockey: string; jockeyId: string | null; horseId: string | null;
-  sex: string | null;
+  sex: string | null; age: number | null;
   kinryo: number | null;
   p1: number | null; p2: number | null; p3: number | null; p4: number | null; p5: number | null;
   age3f: number | null; odds: number | null; ninki: number | null; sire: string | null;
@@ -458,11 +458,12 @@ function parseShutuba(html: string): Horse[] {
     const barei = bareiCell.replace(/<[^>]*>/g, "").replace(/&nbsp;|&#160;/g, " ").trim();
     const sexMark = barei.match(/セン|牡|牝|セ|騙/)?.[0] || null;
     const sex = sexMark === "牡" ? "牡" : sexMark === "牝" ? "牝" : sexMark ? "セン" : null;
+    const age = parseInt(barei.match(/\d{1,2}/)?.[0] || "") || null;
     // 斤量：性齢（Barei）セルの次のセルにある数値
     const kinryo = parseFloat(r.match(/class="Barei[^"]*"[\s\S]*?<\/td>\s*<td[^>]*>\s*(\d{2}(?:\.\d)?)\s*</)?.[1] || "") || null;
     if (!num || !name) continue;
     horses.push({
-      num, waku: waku || Math.ceil(num / 2), name, jockey, jockeyId, horseId, sex, kinryo,
+      num, waku: waku || Math.ceil(num / 2), name, jockey, jockeyId, horseId, sex, age, kinryo,
       p1: null, p2: null, p3: null, p4: null, p5: null,
       age3f: null, odds: null, ninki: null, sire: null, career: null,
     });

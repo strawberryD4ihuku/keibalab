@@ -1999,7 +1999,9 @@ function horseSexBadge(h) {
   const sex = h?.sex;
   if (!sex) return '';
   const cls = sex === '牡' ? 'horse-sex-male' : sex === '牝' ? 'horse-sex-female' : 'horse-sex-gelding';
-  return `<span class="horse-sex ${cls}" aria-label="${esc(sex)}馬">${esc(sex)}</span>`;
+  const age = Number(h?.age) > 0 ? Number(h.age) : null;
+  const label = `${sex}${age || ''}`;
+  return `<span class="horse-sex ${cls}" aria-label="${esc(sex)}馬${age ? ` ${age}歳` : ''}">${esc(label)}</span>`;
 }
 
 const HORSE_MARK_OPTIONS = ['', '◎', '○', '▲', '△', '☆'];
