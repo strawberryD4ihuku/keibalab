@@ -290,6 +290,14 @@ test('28. まとめ判定中のレース切替を止めて目的レースだけ�
   assert.ok(openCode.indexOf("showPage('yoso')") > openCode.indexOf('applyRaceSelection()'), '選択途中のレースが予想画面に見える');
 });
 
+test('29. 旧方式は削除せず通常表示から折りたたむ', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+  assert.ok(html.includes('const currentPredictions = predictions.filter(isAllTicketPrediction)'), '現在方式と旧方式を分けていない');
+  assert.ok(html.includes('過去方式の記録を見る'), '旧方式の記録を開く導線がない');
+  assert.ok(html.includes('現在は使っていない方式です。比較用として記録だけ残しています。'), '旧方式の扱いが説明されていない');
+  assert.ok(html.includes('renderForwardBuyCandidates(currentPredictions, results)'), '通常表示に旧方式の買い候補が混ざる');
+});
+
 // ---- index.html からスコアリング一式を抽出（jv-import.jsと同方式の簡易版）----
 function loadScoring(html) {
   const src = html.match(/<script>([\s\S]*?)<\/script>/)[1];

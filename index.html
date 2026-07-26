@@ -2465,26 +2465,35 @@ function renderForwardSummary() {
   const predictions = forwardEntries(FORWARD_PRED_PREFIX);
   const results = new Map(forwardEntries(FORWARD_RESULT_PREFIX).map(r => [`${r.race_id}:${r.strategy}:${r.model_version}`, r]));
   if (!predictions.length) { el.innerHTML = '<div class="empty">記録はまだありません。次の開催日のオッズ発売後・レース発走前に記録できます。</div>'; return; }
-  const candidateHtml = renderForwardBuyCandidates(predictions, results);
-  const historyHtml = renderForwardHistory(predictions, results);
-  const groups = [
-    {label: '全券種から選択', match: p => isAllTicketPrediction(p)},
-    {label: '堅実狙い（旧方式）', match: p => !isAllTicketPrediction(p) && p.strategy === 'stable'},
-    {label: '穴狙い（旧方式）', match: p => !isAllTicketPrediction(p) && p.strategy === 'upset'},
-    {label: '厳選穴狙い（旧方式）', match: p => !isAllTicketPrediction(p) && p.strategy === 'upset_strict'},
-  ];
-  const rows = groups.map(group => {
-    const ps = predictions.filter(group.match);
+  const currentPredictions = predictions.filter(isAllTicketPrediction);
+  const legacyPredictions = predictions.filter(p => !isAllTicketPrediction(p));
+  const rowFor = (label, ps) => {
     if (!ps.length) return '';
     const buys = ps.filter(p => p.decision === 'buy');
     const settled = buys.map(p => results.get(`${p.race_id}:${p.strategy}:${p.model_version}`)).filter(Boolean);
     const invest = settled.reduce((s, r) => s + r.invest, 0), ret = settled.reduce((s, r) => s + r.return_amount, 0);
     const hits = settled.filter(r => r.hit).length;
     const money = settled.length ? `${invest.toLocaleString('ja-JP')}円 → ${ret.toLocaleString('ja-JP')}円` : '–';
-    return `<tr><td>${esc(group.label)}</td><td>${ps.length}</td><td>${buys.length}</td><td>${settled.length}</td><td>${settled.length ? (hits / settled.length * 100).toFixed(1) + '%' : '–'}</td><td>${money}</td><td>${invest ? (ret / invest * 100).toFixed(1) + '%' : '–'}</td><td>${buys.length - settled.length}</td></tr>`;
-  }).join('');
-  el.innerHTML = `${candidateHtml}<div style="font-weight:700;margin-bottom:6px">これまでのテスト成績</div><div class="table-wrap"><table><thead><tr><th>方針</th><th>記録レース</th><th>買い候補</th><th>結果確定</th><th>的中率</th><th>投資 → 払戻</th><th>実回収率</th><th>結果待ち</th></tr></thead><tbody>${rows}</tbody></table></div>
-    <div class="kaime-note">実回収率は、結果が確定した買い候補の「払戻 ÷ 投資」です。結果待ちは含めません。発走前に保存した判定は、あとから変更しません。</div>${historyHtml}`;
+    return `<tr><td>${esc(label)}</td><td>${ps.length}</td><td>${buys.length}</td><td>${settled.length}</td><td>${settled.length ? (hits / settled.length * 100).toFixed(1) + '%' : '–'}</td><td>${money}</td><td>${invest ? (ret / invest * 100).toFixed(1) + '%' : '–'}</td><td>${buys.length - settled.length}</td></tr>`;
+  };
+  const table = rows => `<div class="table-wrap"><table><thead><tr><th>方針</th><th>記録レース</th><th>買い候補</th><th>結果確定</th><th>的中率</th><th>投資 → 払戻</th><th>実回収率</th><th>結果待ち</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+  const candidateHtml = renderForwardBuyCandidates(currentPredictions, results);
+  const currentStats = currentPredictions.length
+    ? table(rowFor('現在の買い目選択', currentPredictions))
+    : '<div class="axis-desc">現在の方式の記録はまだありません。</div>';
+  const historyHtml = renderForwardHistory(currentPredictions, results);
+  const legacyGroups = [
+    ['堅実狙い', legacyPredictions.filter(p => p.strategy === 'stable')],
+    ['穴狙い', legacyPredictions.filter(p => p.strategy === 'upset')],
+    ['厳選穴狙い', legacyPredictions.filter(p => p.strategy === 'upset_strict')],
+  ];
+  const legacyRows = legacyGroups.map(([label, ps]) => rowFor(label, ps)).join('');
+  const legacyHtml = legacyPredictions.length ? `<details class="forward-history"><summary class="report-toggle">過去方式の記録を見る（${legacyPredictions.length}件）</summary><div class="strategy-help-body">
+    <div class="kaime-note" style="margin-bottom:8px">現在は使っていない方式です。比較用として記録だけ残しています。</div>
+    ${renderForwardBuyCandidates(legacyPredictions, results)}${table(legacyRows)}${renderForwardHistory(legacyPredictions, results)}
+  </div></details>` : '';
+  el.innerHTML = `${candidateHtml}<div style="font-weight:700;margin-bottom:6px">これまでのテスト成績</div>${currentStats}
+    <div class="kaime-note">実回収率は、結果が確定した買い候補の「払戻 ÷ 投資」です。結果待ちは含めません。発走前に保存した判定は、あとから変更しません。</div>${historyHtml}${legacyHtml}`;
 }
 
 function forwardPickLabel(p) {
