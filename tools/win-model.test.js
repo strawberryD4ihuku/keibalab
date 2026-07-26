@@ -268,6 +268,17 @@ test('26. 買い候補のレース・候補馬・当落・投資払戻を履歴�
   assert.ok(html.includes('pick_horses:'), '今後の候補馬名が保存されない');
 });
 
+test('27. 1レースで買える8券種をまとめて比べて検証保存する', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+  const selector = fs.readFileSync(path.join(__dirname, '..', 'lib', 'ticket-selector.js'), 'utf8');
+  assert.ok(html.includes('8種類の馬券を比べ'), '全券種を比べる導線がない');
+  assert.ok(html.includes("bet: 'all'"), '全券種の発売中オッズを取得していない');
+  assert.ok(html.includes("model_version: 'all-ticket-selector-v1'"), '新しい買い目判定を前向き検証へ保存していない');
+  for (const bet of ['単勝', '複勝', '枠連', 'ワイド', '馬連', '馬単', '3連複', '3連単']) {
+    assert.ok(selector.includes(`'${bet}'`), `${bet}が比較対象にない`);
+  }
+});
+
 // ---- index.html からスコアリング一式を抽出（jv-import.jsと同方式の簡易版）----
 function loadScoring(html) {
   const src = html.match(/<script>([\s\S]*?)<\/script>/)[1];

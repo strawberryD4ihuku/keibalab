@@ -9,6 +9,7 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <script src="./lib/race-simulation.js"></script>
+<script src="./lib/ticket-selector.js"></script>
 <script src="./lib/course-layout.js"></script>
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -126,6 +127,12 @@
 
   /* Yoso result */
   .yoso-actions { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border); }
+  .ticket-finder { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 1rem; padding: 12px; border: 1px solid rgba(62,207,142,.3); border-radius: var(--radius); background: rgba(62,207,142,.06); }
+  .ticket-finder-title { color: var(--text); font-size: 13px; font-weight: 700; }
+  .ticket-finder-note { margin-top: 2px; color: var(--text2); font-size: 11px; }
+  .ticket-finder .btn-save { flex-shrink: 0; }
+  .ticket-best { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .ticket-best-main { color: var(--green); font-size: 17px; font-weight: 800; }
   .yoso-result { margin-top: 1rem; background: var(--bg3); border-radius: var(--radius); padding: 1rem 1.25rem; border-left: 3px solid var(--gold); }
   .yoso-mark { font-size: 12px; color: var(--text2); margin-bottom: 6px; }
   .yoso-horses { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
@@ -290,6 +297,8 @@
     .yoso-actions { gap: 10px; align-items: stretch; }
     .yoso-actions .field { width: 100%; }
     .yoso-actions select { width: 100% !important; }
+    .ticket-finder { align-items: stretch; flex-direction: column; }
+    .ticket-finder .btn-save { width: 100%; min-height: 42px; }
     .race-sim-head { display: block; }
     .race-sim-controls { align-items: stretch; }
     .pace-group { width: 100%; }
@@ -449,13 +458,18 @@
             <div class="sim-result" id="sim-result"></div>
           </div>
         </div>
+        <div class="ticket-finder">
+          <div><div class="ticket-finder-title">どの買い方がよいか、まとめて調べる</div>
+            <div class="ticket-finder-note">8種類の馬券を比べ、買うなら最もよい1点だけを表示します。</div></div>
+          <button class="btn-save" onclick="generateBestTicketYoso()">🔍 おすすめの買い方を調べる</button>
+        </div>
         <div class="yoso-actions">
-          <div class="field"><label>券種</label>
+          <div class="field"><label>券種を指定して見る</label>
             <select id="bet-type" style="width:auto" onchange="if (document.getElementById('yoso-result').style.display !== 'none' && horses.length) generateYoso()">
-              <option>単勝</option><option>複勝</option><option selected>馬連</option><option>馬単</option><option>ワイド</option><option>3連複</option><option>3連単</option>
+              <option>単勝</option><option>複勝</option><option>枠連</option><option selected>馬連</option><option>馬単</option><option>ワイド</option><option>3連複</option><option>3連単</option>
             </select>
           </div>
-          <button class="btn-yoso" onclick="generateYoso()">✨ この条件で予想する</button>
+          <button class="btn-yoso" onclick="generateYoso()">選んだ券種で見る</button>
         </div>
         <div id="yoso-result" style="display:none" class="yoso-result">
           <div class="yoso-mark" id="honmei-label">◎ 本命</div>
@@ -619,6 +633,7 @@ let selectedHorses = new Set();
 let horseMarks = {};
 let yosoHorses = [];
 let yosoPicks = [];
+let recommendedTicket = null;
 let monthlyChart = null;
 
 // JRA公式の枠色（1白・2黒・3赤・4青・5黄・6緑・7橙・8桃）
@@ -2015,6 +2030,7 @@ function renderTable() {
 const BET_CONFIG = {
   '単勝':   {marks: ['◎'], style: 'win', need: 1},
   '複勝':   {marks: ['◎', '○'], style: 'place', need: 1},
+  '枠連':   {marks: ['◎', '○'], style: 'mixed', need: 2},
   'ワイド': {marks: ['◎', '○', '▲'], style: 'place', need: 2},
   '馬連':   {marks: ['◎', '○', '▲', '△'], style: 'mixed', need: 2},
   '馬単':   {marks: ['◎', '○', '▲'], style: 'win', need: 2},
@@ -2041,6 +2057,7 @@ function kaimeText(betType, picks) {
   switch (betType) {
     case '単勝':   return `単勝 ${cs('single', 0)}番（1点）`;
     case '複勝':   return `複勝 ${cs('single', 0)}番 本線${picks[1] ? `／押さえ ${cs('single', 1)}番` : ''}`;
+    case '枠連':   return `枠連 ${comboSpan('sorted', [picks[0].waku, picks[1].waku])}（1点）`;
     case 'ワイド': return `ワイド ${cs('sorted', 0, 1)} 本線${picks[2] ? `／${cs('sorted', 0, 2)} 押さえ（計2点）` : '（1点）'}`;
     case '馬連':   return `馬連 ${cs('sorted', 0, 1)} 本線${picks[2] ? `／${cs('sorted', 0, 2)}${picks[3] ? `・${cs('sorted', 0, 3)}` : ''} 押さえ（計${Math.min(picks.length - 1, 3)}点）` : '（1点）'}`;
     case '馬単':   return `馬単 ${cs('ordered', 0, 1)} 本線${picks[2] ? `／${cs('ordered', 0, 2)} 押さえ（計2点）` : '（1点）'}`;
@@ -2122,6 +2139,7 @@ function buildCombos(betType, picks) {
   switch (betType) {
     case '単勝':   return [[n[0]]];
     case '複勝':   return n.slice(0, 2).map(x => [x]);
+    case '枠連':   return [[picks[0].waku, picks[1].waku]];
     case 'ワイド': return n[2] ? [[n[0], n[1]], [n[0], n[2]]] : [[n[0], n[1]]];
     case '馬連':   return [[n[0], n[1]], n[2] ? [n[0], n[2]] : null, n[3] ? [n[0], n[3]] : null].filter(Boolean);
     case '馬単':   return n[2] ? [[n[0], n[1]], [n[0], n[2]]] : [[n[0], n[1]]];
@@ -2150,6 +2168,7 @@ function buildCombos(betType, picks) {
 // 推定勝率は、検証条件を満たして採用された総合モデル（models/win-model.json）があれば
 // それを使い、不採用・取得失敗時は市場確率へ安全にフォールバックする。
 let winValueSeq = 0;
+let ticketSelectorSeq = 0;
 let winModel = null;          // 採用済みの総合モデル（不採用・取得失敗はnullのまま）
 let winModelLoaded = false;
 async function loadWinModel() {
@@ -2194,6 +2213,8 @@ function buildScoredHorses(source = horses) {
 const FORWARD_PRED_PREFIX = 'klforward:v1:';
 const FORWARD_RESULT_PREFIX = 'klforward-result:v1:';
 const FORWARD_LABELS = {stable: '堅実狙い', upset: '穴狙い', upset_strict: '厳選穴狙い'};
+function isAllTicketPrediction(p) { return String(p?.model_version || '').startsWith('all-ticket-selector-'); }
+function forwardStrategyLabel(p) { return isAllTicketPrediction(p) ? '全券種から選択' : (FORWARD_LABELS[p?.strategy] || p?.strategy || '不明'); }
 
 async function loadUpsetModel() {
   if (upsetModelLoaded) return upsetModel;
@@ -2321,7 +2342,7 @@ async function loadForwardLedgerFromSupabase() {
   }
 }
 
-function buildForwardPredictions(scored, oddsTime, betHorses = scored) {
+function buildForwardPredictions(scored, oddsTime, betHorses = scored, oddsByType = {}) {
   const raceDate = document.getElementById('race-date').value;
   const raceTime = selectedRaceTime();
   const wetTrackHorses = scored.map(h => ({
@@ -2338,32 +2359,25 @@ function buildForwardPredictions(scored, oddsTime, betHorses = scored) {
     race_name: document.getElementById('race-name').value,
     recorded_at: new Date().toISOString(), odds_time: oddsTime || null, race_time: raceTime,
   };
-  const ranked = rankForBet(betHorses, BET_CONFIG['馬連']);
-  const axis = ranked[0] || null;
-  const stablePicks = rankForBet(betHorses, BET_CONFIG['複勝']).slice(0, BET_CONFIG['複勝'].marks.length);
-  const stableCombos = buildCombos('複勝', stablePicks);
-  const stableBuy = betHorses.length <= 9 && axis && Number(axis.odds) >= 1 && Number(axis.odds) < 2;
-  const predictions = [{...base, strategy: 'stable', model_version: 'stable-small-field-favorite-v1',
-    decision: stableBuy ? 'buy' : 'skip', bet_type: '複勝', picks: stableBuy ? stableCombos : [],
-    invest: stableBuy ? stableCombos.length * 100 : 0,
-    signals: {
-      field: betHorses.length, axis_num: axis?.num || null, axis_odds: Number(axis?.odds) || null,
-      pick_horses: stableBuy ? stablePicks.map(h => ({num: h.num, name: h.name, odds: Number(h.odds) || null})) : [],
-      wet_track_schema: 1, wet_track_horses: wetTrackHorses,
-    },
+  const probs = predictWinModel(scored, winModel);
+  const probabilityHorses = scored.map((h, i) => ({...h, predictedWinProb: probs[i].predictedWinProb}));
+  const selection = window.TicketSelector
+    ? TicketSelector.selectBestTickets(probabilityHorses, oddsByType, {threshold: 110})
+    : {best: null, comparedTypes: 0};
+  const best = selection.best;
+  const pickHorses = best ? best.nums.map(n => {
+    const h = betHorses.find(x => Number(x.num) === Number(n));
+    return {num: n, name: h?.name || '', odds: Number(h?.odds) || null};
+  }) : [];
+  return [{...base, strategy: 'upset_strict', model_version: 'all-ticket-selector-v1',
+    decision: best ? 'buy' : 'skip', bet_type: best?.betType || '全券種', picks: best ? [best.nums] : [],
+    invest: best ? 100 : 0, horse: null,
+    signals: {compared_types: selection.comparedTypes || 0, threshold: 110,
+      ticket_probability: best?.probability ?? null, ticket_odds: best?.odds ?? null,
+      expected_return_per_100: best?.expectedReturn ?? null, pick_horses: pickHorses,
+      ticket_label: best ? ticketHorseLabel(best, betHorses) : null,
+      wet_track_schema: 1, wet_track_horses: wetTrackHorses},
   }];
-  if (upsetModel) {
-    const candidates = predictUpsetCandidates(scored, upsetModel);
-    for (const [strategy, threshold] of [['upset', Number(upsetModel.threshold) || 100], ['upset_strict', Number(upsetModel.watchCandidate?.threshold) || 110]]) {
-      const pick = candidates.find(x => x.expectedRoiPercent >= threshold) || null;
-      predictions.push({...base, strategy, model_version: upsetModel.version || 'upset-model',
-        decision: pick ? 'buy' : 'skip', bet_type: '単勝', picks: pick ? [[pick.num]] : [], invest: pick ? 100 : 0,
-        horse: pick, signals: {threshold, candidate_count: candidates.length,
-          pick_horses: pick ? [{num: pick.num, name: pick.name, odds: pick.odds}] : []},
-      });
-    }
-  }
-  return predictions;
 }
 
 function renderForwardCurrent(predictions, saved, saveNote) {
@@ -2371,20 +2385,23 @@ function renderForwardCurrent(predictions, saved, saveNote) {
   if (!el) return;
   el.innerHTML = predictions.map(p => {
     const buy = p.decision === 'buy';
-    const detail = p.strategy === 'stable'
+    const detail = isAllTicketPrediction(p)
+      ? (buy ? `${p.bet_type} ${forwardPickLabel(p)}（100円）` : `${p.signals?.compared_types || 0}種類を比較して候補なし`)
+      : p.strategy === 'stable'
       ? (buy ? `複勝 ${p.picks.map(x => x[0] + '番').join('・')}（${p.invest}円）` : `頭数${p.signals.field}・軸${p.signals.axis_odds ?? '–'}倍`)
       : (buy ? `単勝 ${p.horse.num}番 ${esc(p.horse.name)}（${p.horse.odds.toFixed(1)}倍）` : `購入条件に合う穴馬なし`);
-    return `<div style="margin:7px 0"><strong>${esc(FORWARD_LABELS[p.strategy])}</strong>：<span class="${buy ? 'green' : ''}">${buy ? '買う' : '見送る'}</span>　${detail}</div>`;
+    return `<div style="margin:7px 0"><strong>${esc(forwardStrategyLabel(p))}</strong>：<span class="${buy ? 'green' : ''}">${buy ? '買う' : '見送る'}</span>　${detail}</div>`;
   }).join('') + `<div class="kaime-note">${esc(saveNote || (saved ? 'この発走前判定を固定保存しました。' : '判定結果を表示しています。'))} オッズ時刻: ${esc(predictions[0]?.odds_time || '不明')}</div>`;
 }
 
 async function refreshForwardValidation(recordForward = false) {
   if (!horses.length || !currentRaceId) return;
-  await loadUpsetModel();
-  let liveOdds = null, oddsTime = null;
+  await loadWinModel();
+  let liveOdds = null, oddsTime = null, oddsByType = {};
   try {
-    const json = await apiGet({action: 'odds', race_id: currentRaceId, bet: '単勝'});
-    liveOdds = json.odds || null; oddsTime = json.official || null;
+    const json = await apiGet({action: 'odds', race_id: currentRaceId, bet: 'all'});
+    oddsByType = json.odds_by_type || {};
+    liveOdds = oddsByType['単勝'] || null; oddsTime = json.official || null;
   } catch { /* 発売前は記録しない */ }
   if (!liveOdds) {
     document.getElementById('forward-current').textContent = '発売中単勝オッズを取得できないため、まだ記録していません';
@@ -2397,7 +2414,7 @@ async function refreshForwardValidation(recordForward = false) {
     return {...h, odds: odds > 0 ? odds : h.odds, score: h.score ?? computeScore(h)};
   });
   const scored = buildScoredHorses(updated).map((h, i) => ({...h, score: updated[i].score}));
-  const predictions = buildForwardPredictions(scored, oddsTime, updated);
+  const predictions = buildForwardPredictions(scored, oddsTime, updated, oddsByType);
   let finished = false;
   try { finished = Boolean((await apiGet({action: 'result', race_id: currentRaceId})).finished); } catch { /* 未確定扱い */ }
   const canSave = !finished && isBeforeSelectedRaceStart();
@@ -2440,20 +2457,28 @@ function renderForwardSummary() {
   if (!predictions.length) { el.innerHTML = '<div class="empty">記録はまだありません。次の開催日のオッズ発売後・レース発走前に記録できます。</div>'; return; }
   const candidateHtml = renderForwardBuyCandidates(predictions, results);
   const historyHtml = renderForwardHistory(predictions, results);
-  const rows = Object.keys(FORWARD_LABELS).map(strategy => {
-    const ps = predictions.filter(p => p.strategy === strategy);
+  const groups = [
+    {label: '全券種から選択', match: p => isAllTicketPrediction(p)},
+    {label: '堅実狙い（旧方式）', match: p => !isAllTicketPrediction(p) && p.strategy === 'stable'},
+    {label: '穴狙い（旧方式）', match: p => !isAllTicketPrediction(p) && p.strategy === 'upset'},
+    {label: '厳選穴狙い（旧方式）', match: p => !isAllTicketPrediction(p) && p.strategy === 'upset_strict'},
+  ];
+  const rows = groups.map(group => {
+    const ps = predictions.filter(group.match);
+    if (!ps.length) return '';
     const buys = ps.filter(p => p.decision === 'buy');
     const settled = buys.map(p => results.get(`${p.race_id}:${p.strategy}:${p.model_version}`)).filter(Boolean);
     const invest = settled.reduce((s, r) => s + r.invest, 0), ret = settled.reduce((s, r) => s + r.return_amount, 0);
     const hits = settled.filter(r => r.hit).length;
     const money = settled.length ? `${invest.toLocaleString('ja-JP')}円 → ${ret.toLocaleString('ja-JP')}円` : '–';
-    return `<tr><td>${esc(FORWARD_LABELS[strategy])}</td><td>${ps.length}</td><td>${buys.length}</td><td>${settled.length}</td><td>${settled.length ? (hits / settled.length * 100).toFixed(1) + '%' : '–'}</td><td>${money}</td><td>${invest ? (ret / invest * 100).toFixed(1) + '%' : '–'}</td><td>${buys.length - settled.length}</td></tr>`;
+    return `<tr><td>${esc(group.label)}</td><td>${ps.length}</td><td>${buys.length}</td><td>${settled.length}</td><td>${settled.length ? (hits / settled.length * 100).toFixed(1) + '%' : '–'}</td><td>${money}</td><td>${invest ? (ret / invest * 100).toFixed(1) + '%' : '–'}</td><td>${buys.length - settled.length}</td></tr>`;
   }).join('');
   el.innerHTML = `${candidateHtml}<div style="font-weight:700;margin-bottom:6px">これまでのテスト成績</div><div class="table-wrap"><table><thead><tr><th>方針</th><th>記録レース</th><th>買い候補</th><th>結果確定</th><th>的中率</th><th>投資 → 払戻</th><th>実回収率</th><th>結果待ち</th></tr></thead><tbody>${rows}</tbody></table></div>
     <div class="kaime-note">実回収率は、結果が確定した買い候補の「払戻 ÷ 投資」です。結果待ちは含めません。発走前に保存した判定は、あとから変更しません。</div>${historyHtml}`;
 }
 
 function forwardPickLabel(p) {
+  if (p.signals?.ticket_label) return p.signals.ticket_label;
   const saved = Array.isArray(p.signals?.pick_horses) ? p.signals.pick_horses : [];
   if (saved.length) return saved.map(h => `${h.num}番${h.name ? ' ' + h.name : ''}`).join('・');
   if (p.horse) return `${p.horse.num}番${p.horse.name ? ' ' + p.horse.name : ''}`;
@@ -2482,7 +2507,7 @@ function renderForwardHistory(predictions, results) {
       : `${invest.toLocaleString('ja-JP')}円投資・精算待ち`;
     return `<div class="forward-history-card">
       <div><div class="forward-history-race">${esc(p.race_date)}　${esc(p.venue || '')} ${Number(p.race_num)}R　${esc(p.race_name || '')}</div>
-        <div class="forward-history-pick">${esc(FORWARD_LABELS[p.strategy] || p.strategy)}・${esc(p.bet_type)}　${esc(forwardPickLabel(p))}${esc(oddsText)}</div></div>
+        <div class="forward-history-pick">${esc(forwardStrategyLabel(p))}・${esc(p.bet_type)}　${esc(forwardPickLabel(p))}${esc(oddsText)}</div></div>
       <div class="forward-history-money">${esc(money)}</div>
       <div class="forward-history-status ${statusClass}">${status}</div>
     </div>`;
@@ -2524,10 +2549,12 @@ function renderForwardBuyCandidates(predictions, results, now = new Date()) {
   const cards = races.map(items => {
     const p = items[0], time = forwardRaceTime(p);
     const details = items.map(item => {
-      const bet = item.strategy === 'stable'
+      const bet = isAllTicketPrediction(item)
+        ? `${item.bet_type} ${forwardPickLabel(item)}`
+        : item.strategy === 'stable'
         ? `${item.bet_type} ${item.picks.map(x => x[0] + '番').join('・')}`
         : `${item.bet_type} ${item.horse?.num || item.picks?.[0]?.[0] || '—'}番${item.horse?.name ? ' ' + item.horse.name : ''}`;
-      return `${FORWARD_LABELS[item.strategy]}：${bet}`;
+      return `${forwardStrategyLabel(item)}：${bet}`;
     }).join(' ／ ');
     return `<div class="forward-buy-card">
       <div class="forward-buy-race">
@@ -2593,6 +2620,90 @@ async function runForwardBatch() {
     forwardBatchRunning = false;
     updateForwardBatchAvailability();
     renderForwardSummary();
+  }
+}
+
+function ticketNumsLabel(ticket) {
+  if (!ticket) return '';
+  if (ticket.betType === '枠連') return ticket.nums.map(n => `${n}枠`).join('-');
+  if (ticket.betType === '馬単' || ticket.betType === '3連単') return ticket.nums.join('→');
+  return ticket.nums.join('-');
+}
+
+function ticketHorseLabel(ticket, source = horses) {
+  if (ticket.betType === '枠連') {
+    const frames = [...new Set(ticket.nums)];
+    return frames.map(frame => `${frame}枠（${source.filter(h => Number(h.waku) === Number(frame)).map(h => `${h.num}番 ${h.name}`).join('・')}）`).join(' ／ ');
+  }
+  const byNum = new Map(source.map(h => [Number(h.num), h.name]));
+  return ticket.nums.map(n => `${n}番${byNum.get(Number(n)) ? ' ' + byNum.get(Number(n)) : ''}`).join('・');
+}
+
+async function generateBestTicketYoso() {
+  if (!horses.length) { showToast('先に選んだレースの出馬表を表示してください'); return; }
+  if (!currentRaceId || !window.TicketSelector) { showToast('買い方を比較できませんでした'); return; }
+  const seq = ++ticketSelectorSeq;
+  const button = document.querySelector('.ticket-finder .btn-save');
+  if (button) { button.disabled = true; button.textContent = '調べています...'; }
+  try {
+    const [json] = await Promise.all([
+      apiGet({action: 'odds', race_id: currentRaceId, bet: 'all'}),
+      loadWinModel(),
+    ]);
+    if (seq !== ticketSelectorSeq || !horses.length) return;
+    const oddsByType = json.odds_by_type || {};
+    const singleOdds = oddsByType['単勝'] || {};
+    const liveHorses = horses.map(h => {
+      const entry = singleOdds[String(h.num)] || singleOdds[String(h.num).padStart(2, '0')];
+      const odds = entry && parseFloat(entry[0]);
+      return odds > 0 ? {...h, odds} : h;
+    });
+    const scored = buildScoredHorses(liveHorses);
+    const probs = predictWinModel(scored, winModel);
+    const probabilityHorses = scored.map((h, i) => ({...h, predictedWinProb: probs[i].predictedWinProb}));
+    const selection = TicketSelector.selectBestTickets(probabilityHorses, oddsByType, {threshold: 110});
+    renderBestTicketResult(selection, probabilityHorses, json.official || null);
+  } catch (e) {
+    showToast('発売中オッズをまとめて取得できませんでした');
+  } finally {
+    if (button) { button.disabled = false; button.textContent = '🔍 おすすめの買い方を調べる'; }
+  }
+}
+
+function renderBestTicketResult(selection, source, oddsTime) {
+  const best = selection.best;
+  recommendedTicket = best;
+  yosoHorses = source;
+  yosoPicks = best
+    ? (best.betType === '枠連'
+      ? source.filter(h => best.nums.includes(Number(h.waku)))
+      : best.nums.map(n => source.find(h => Number(h.num) === Number(n))).filter(Boolean))
+    : [];
+  document.getElementById('honmei-label').textContent = '🎯 8種類を比べた結果';
+  document.getElementById('honmei-area').innerHTML = best
+    ? `<div><div class="ticket-best"><span class="yoso-tag">買う候補</span><span class="ticket-best-main">${esc(best.betType)} ${esc(ticketNumsLabel(best))}</span></div>
+       <div style="margin-top:8px;font-size:13px;line-height:1.9">${esc(ticketHorseLabel(best, source))}<br>
+       当たりやすさ <strong>${(best.probability * 100).toFixed(1)}%</strong> ／ 現在 <strong>${best.odds.toFixed(1)}倍</strong> ／ 100円が平均 <strong class="green">${Math.round(best.expectedReturn)}円相当</strong>になる見込み</div></div>`
+    : `<div style="font-size:13px;line-height:1.9">🙅 <strong>このレースは見送ります</strong><br><span style="color:var(--text2)">比べられた${selection.comparedTypes}種類の中に、今のオッズで買う条件を満たす組み合わせがありません。</span></div>`;
+  document.getElementById('taikou-label').style.display = 'none';
+  document.getElementById('taikou-area').style.display = 'none';
+
+  const rows = selection.byType.map(t => `<tr${best === t ? ' style="background:rgba(62,207,142,.08)"' : ''}>
+    <td>${esc(t.betType)}</td><td style="white-space:nowrap">${esc(ticketNumsLabel(t))}</td>
+    <td>${(t.probability * 100).toFixed(1)}%</td><td>${t.odds.toFixed(1)}倍</td>
+    <td class="${t.decision === 'buy' ? 'green' : ''}" style="font-weight:650">${Math.round(t.expectedReturn)}円相当</td>
+    <td>${t.decision === 'buy' ? '<span class="green">候補</span>' : '<span style="color:var(--text3)">見送り</span>'}</td></tr>`).join('');
+  document.getElementById('yoso-kaime').innerHTML = `<details class="strategy-help"><summary>ほかの買い方との比較を見る</summary><div class="strategy-help-body">
+    <div class="table-wrap"><table><thead><tr><th>買い方</th><th>組み合わせ</th><th>当たりやすさ</th><th>現在オッズ</th><th>100円の見込み</th><th>判定</th></tr></thead><tbody>${rows}</tbody></table></div>
+    <span class="kaime-note">全組み合わせを調べたうえで、各買い方の最上位だけを表示しています。オッズ変動と計算のずれをあらかじめ差し引き、100円が110円相当以上になるものだけを候補にします。${oddsTime ? ` オッズは${esc(String(oddsTime).slice(11, 16))}時点です。` : ''}</span>
+  </div></details>`;
+  document.getElementById('yoso-comment').textContent = '過去成績と現在オッズからの試算です。実際の着順や払戻を保証するものではありません。候補が複数あっても、買いすぎを避けるため最もよい1点だけを表示します。';
+  document.getElementById('yoso-result').style.display = 'block';
+  document.getElementById('bet-form').style.display = 'grid';
+  if (best) {
+    document.getElementById('bet-type').value = best.betType;
+    const amount = document.getElementById('bet-amount');
+    if (amount && !amount.value) amount.value = '100';
   }
 }
 
@@ -2709,6 +2820,7 @@ function generateYoso() {
   if (!horses.length) { showToast('先に選んだレースの出馬表を表示してください'); return; }
 
   const betType = document.getElementById('bet-type').value;
+  recommendedTicket = null;
   // 単勝は期待値判定方式（推定勝率×オッズで買う/見送るを判断）
   if (betType === '単勝') { generateWinValueYoso(); return; }
   document.getElementById('honmei-label').textContent = '◎ 本命';
@@ -2783,7 +2895,9 @@ async function saveBet() {
     raceId = raceData.id;
   }
 
-  const pickedNums = (yosoPicks.length ? yosoPicks : yosoHorses.slice(0, 4)).map(h => h.num);
+  const pickedNums = recommendedTicket && recommendedTicket.betType === betType
+    ? recommendedTicket.nums
+    : (yosoPicks.length ? yosoPicks : yosoHorses.slice(0, 4)).map(h => h.num);
   const {error} = await sb.from('bets').insert({
     user_id: currentUser.id,
     race_id: raceId,

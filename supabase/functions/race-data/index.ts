@@ -589,11 +589,27 @@ async function fetchRaceResult(raceId: string) {
 // 券種別のオッズ辞書を返す（複勝は type=1 のレスポンス内キー"2"）
 async function fetchBetOdds(raceId: string, bet: string) {
   if (!/^\d{12}$/.test(raceId)) throw new Error("race_id は必須です");
+  if (bet === "all") return await fetchAllBetOdds(raceId);
   const code = BET_TYPE_CODE[bet] || 1;
   const r = await fetchOddsDict(raceId, code);
   if (!r) return { odds: null, official: null };
   const key = bet === "複勝" ? "2" : String(code);
   return { odds: r.odds[key] || null, official: r.official };
+}
+
+async function fetchAllBetOdds(raceId: string) {
+  const codes = [1, 3, 4, 5, 6, 7, 8];
+  const fetched = await Promise.all(codes.map((code) => fetchOddsDict(raceId, code).catch(() => null)));
+  const byCode = new Map(codes.map((code, i) => [code, fetched[i]]));
+  const oddsByType: Record<string, Record<string, string[]> | null> = {};
+  for (const [betType, code] of Object.entries(BET_TYPE_CODE)) {
+    const result = byCode.get(code);
+    const key = betType === "複勝" ? "2" : String(code);
+    oddsByType[betType] = result?.odds?.[key] || null;
+  }
+  const officialTimes = fetched.map((r) => r?.official).filter(Boolean).sort();
+  const official = officialTimes[officialTimes.length - 1] || null;
+  return {odds_by_type: oddsByType, official};
 }
 
 // 出走馬に単勝オッズ・人気を結合
