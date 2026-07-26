@@ -31,6 +31,7 @@ interface CareerStats {
 
 interface Horse {
   num: number; waku: number; name: string; jockey: string; jockeyId: string | null; horseId: string | null;
+  sex: string | null;
   kinryo: number | null;
   p1: number | null; p2: number | null; p3: number | null; p4: number | null; p5: number | null;
   age3f: number | null; odds: number | null; ninki: number | null; sire: string | null;
@@ -453,11 +454,15 @@ function parseShutuba(html: string): Horse[] {
     const jockeyCell = r.match(/class="Jockey"[\s\S]*?<\/td>/)?.[0] || "";
     const jockey = (jockeyCell.match(/<a[^>]*>\s*([^<]+?)\s*</)?.[1] || "—").trim();
     const jockeyId = jockeyCell.match(/\/jockey\/(?:result\/recent\/)?(\w+)\//)?.[1] || null;
+    const bareiCell = r.match(/class="Barei[^"]*"[^>]*>([\s\S]*?)<\/td>/)?.[1] || "";
+    const barei = bareiCell.replace(/<[^>]*>/g, "").replace(/&nbsp;|&#160;/g, " ").trim();
+    const sexMark = barei.match(/セン|牡|牝|セ|騙/)?.[0] || null;
+    const sex = sexMark === "牡" ? "牡" : sexMark === "牝" ? "牝" : sexMark ? "セン" : null;
     // 斤量：性齢（Barei）セルの次のセルにある数値
     const kinryo = parseFloat(r.match(/class="Barei[^"]*"[\s\S]*?<\/td>\s*<td[^>]*>\s*(\d{2}(?:\.\d)?)\s*</)?.[1] || "") || null;
     if (!num || !name) continue;
     horses.push({
-      num, waku: waku || Math.ceil(num / 2), name, jockey, jockeyId, horseId, kinryo,
+      num, waku: waku || Math.ceil(num / 2), name, jockey, jockeyId, horseId, sex, kinryo,
       p1: null, p2: null, p3: null, p4: null, p5: null,
       age3f: null, odds: null, ninki: null, sire: null, career: null,
     });

@@ -81,6 +81,8 @@
   .workflow-card { border-color: rgba(62,207,142,0.3); box-shadow: 0 0 0 1px rgba(62,207,142,0.04); }
   .workflow-note { font-size: 12px; color: var(--text2); line-height: 1.8; margin-bottom: 12px; }
   .readonly-field { background: rgba(34,38,58,0.55) !important; color: var(--text2) !important; cursor: default; }
+  .race-source-link { display: none; align-items: center; justify-content: center; min-height: 38px; padding: 7px 11px; border: 1px solid var(--border2); border-radius: var(--radius-sm); color: var(--text2); font-size: 11px; font-weight: 600; text-decoration: none; background: var(--bg3); }
+  .race-source-link:hover { color: var(--accent); border-color: var(--accent); }
   .strategy-help { margin: 10px 0 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg3); }
   .strategy-help summary { padding: 9px 11px; color: var(--text2); font-size: 12px; cursor: pointer; }
   .strategy-help-body { padding: 0 11px 10px; font-size: 12px; line-height: 1.8; color: var(--text2); }
@@ -245,6 +247,10 @@
   .horse-link { color: var(--text); text-decoration: none; border-bottom: 1px dotted var(--text3); }
   .horse-link:hover { color: var(--accent); border-bottom-color: var(--accent); }
   .horse-identity { display: flex; align-items: center; gap: 6px; min-width: max-content; }
+  .horse-sex { display: inline-flex; align-items: center; justify-content: center; min-width: 24px; height: 18px; padding: 0 4px; border-radius: 4px; font-size: 9px; font-weight: 700; line-height: 1; }
+  .horse-sex-male { color: #82b5ff; background: rgba(79,142,247,.15); }
+  .horse-sex-female { color: #ff9fbd; background: rgba(255,112,154,.14); }
+  .horse-sex-gelding { color: var(--text2); background: var(--bg3); border: 1px solid var(--border); }
   .horse-sire { color: var(--gold); font-size: 10px; font-weight: 400; }
   .horse-info-links { display: inline-flex; align-items: center; gap: 4px; font-size: 9px; font-weight: 500; }
   .horse-info-link { display: inline-flex; align-items: center; min-height: 20px; padding: 1px 6px; border: 1px solid var(--border); border-radius: 100px; color: var(--text2); text-decoration: none; background: var(--bg3); }
@@ -383,6 +389,7 @@
         </div>
         <div style="margin-top:10px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">
           <button class="btn-yoso" id="fetch-btn" onclick="fetchRaceData()">🔄 選んだレースの出馬表を表示</button>
+          <a id="race-source-link" class="race-source-link" href="#" target="_blank" rel="noopener">netkeibaでこのレースを見る ↗</a>
           <span id="fetch-status" style="font-size:12px;color:var(--text2)"></span>
         </div>
         <div id="entry-notice" class="axis-desc" style="display:none;margin-top:10px;border-left-color:var(--gold);color:var(--gold)"></div>
@@ -991,6 +998,8 @@ async function loadVenues() {
   const date = document.getElementById('race-date').value;
   const venueSel = document.getElementById('venue');
   if (!date) return;
+  const sourceLink = document.getElementById('race-source-link');
+  if (sourceLink) { sourceLink.style.display = 'none'; sourceLink.removeAttribute('href'); }
   const forwardDate = document.getElementById('forward-date');
   if (forwardDate && forwardDate.value !== date) forwardDate.value = date;
   venueSel.innerHTML = '<option value="">読み込み中...</option>';
@@ -1054,6 +1063,7 @@ function applyMainRace() {
 
   raceSel.value = (target ? target.num : v.main_num) + 'R';
   document.getElementById('race-name').value = (target ? target.title : v.main_name) || '';
+  updateRaceSourceLink();
 }
 
 // レース番号を変えたらレース名も追従させる
@@ -1062,6 +1072,23 @@ function applyRaceSelection() {
   const num = parseInt(document.getElementById('race-num').value);
   const r = v?.races?.find(x => x.num === num);
   document.getElementById('race-name').value = r?.title || '';
+  updateRaceSourceLink(r?.id || null);
+}
+
+function updateRaceSourceLink(raceId = null) {
+  const link = document.getElementById('race-source-link');
+  if (!link) return;
+  const venue = venueInfo.find(x => x.venue === document.getElementById('venue').value);
+  const num = parseInt(document.getElementById('race-num').value);
+  const id = String(raceId || venue?.races?.find(r => Number(r.num) === num)?.id || '');
+  if (!/^\d{12}$/.test(id)) {
+    link.style.display = 'none';
+    link.removeAttribute('href');
+    return;
+  }
+  link.href = `https://race.netkeiba.com/race/shutuba.html?race_id=${id}`;
+  link.style.display = 'inline-flex';
+  link.setAttribute('aria-label', `${document.getElementById('race-name').value || '選択したレース'}をnetkeibaで見る`);
 }
 
 // 選択中レースの発走時刻（表示用）
@@ -1114,6 +1141,7 @@ async function fetchRaceData(recordForward = false) {
 
     horses = json.horses;
     currentRaceId = json.race_id || null;
+    updateRaceSourceLink(currentRaceId);
     if (!recordForward) loadHorseMarks();
     currentRaceSurface = json.race_surface || null;
     currentRaceDistance = json.race_distance || null;
@@ -1967,6 +1995,13 @@ function horseArticleLink(h) {
   return `<span class="horse-info-links"><a href="${esc(newsUrl)}" target="_blank" rel="noopener" class="horse-info-link" onclick="event.stopPropagation()" aria-label="${esc(h.name)}の最新記事を探す">記事</a></span>`;
 }
 
+function horseSexBadge(h) {
+  const sex = h?.sex;
+  if (!sex) return '';
+  const cls = sex === '牡' ? 'horse-sex-male' : sex === '牝' ? 'horse-sex-female' : 'horse-sex-gelding';
+  return `<span class="horse-sex ${cls}" aria-label="${esc(sex)}馬">${esc(sex)}</span>`;
+}
+
 const HORSE_MARK_OPTIONS = ['', '◎', '○', '▲', '△', '☆'];
 const HORSE_MARK_LABELS = {'○': '◯'};
 function horseMarkStorageKey() {
@@ -2018,7 +2053,7 @@ function renderTable() {
       <td><select class="horse-mark-select" onchange="setHorseMark(event, ${h.num}, this.value)" onclick="event.stopPropagation()" aria-label="${esc(h.name)}の印">${markOptions}</select></td>
       <td><span class="waku-num" style="background:${wk.bg};color:${wk.fg}">${h.waku}</span></td>
       <td><strong>${h.num}</strong></td>
-      <td style="text-align:left;font-weight:500;white-space:nowrap"><div class="horse-identity">${h.horseId ? `<a href="https://db.netkeiba.com/horse/${esc(h.horseId)}/" target="_blank" rel="noopener" class="horse-link" onclick="event.stopPropagation()">${esc(h.name)}</a>` : esc(h.name)}${h.sire ? `<span class="horse-sire">${h.sireStats?.sire_id ? `<a href="https://db.netkeiba.com/horse/${esc(h.sireStats.sire_id)}/" target="_blank" rel="noopener" class="horse-link" style="color:var(--gold);border-bottom-color:rgba(240,192,64,0.4)" onclick="event.stopPropagation()">${esc(h.sire)}</a>` : esc(h.sire)}産駒</span>` : ''}${horseArticleLink(h)}</div></td>
+      <td style="text-align:left;font-weight:500;white-space:nowrap"><div class="horse-identity">${h.horseId ? `<a href="https://db.netkeiba.com/horse/${esc(h.horseId)}/" target="_blank" rel="noopener" class="horse-link" onclick="event.stopPropagation()">${esc(h.name)}</a>` : esc(h.name)}${horseSexBadge(h)}${h.sire ? `<span class="horse-sire">${h.sireStats?.sire_id ? `<a href="https://db.netkeiba.com/horse/${esc(h.sireStats.sire_id)}/" target="_blank" rel="noopener" class="horse-link" style="color:var(--gold);border-bottom-color:rgba(240,192,64,0.4)" onclick="event.stopPropagation()">${esc(h.sire)}</a>` : esc(h.sire)}産駒</span>` : ''}${horseArticleLink(h)}</div></td>
       <td style="color:var(--text2);white-space:nowrap">${h.jockeyId ? `<a href="https://db.netkeiba.com/jockey/${esc(h.jockeyId)}/" target="_blank" rel="noopener" class="horse-link" style="color:var(--text2)" onclick="event.stopPropagation()">${esc(h.jockey)}</a>` : esc(h.jockey)}</td>
       <td>${fmtRank(h.p1)}</td>
       <td>${fmtRank(h.p2)}</td>

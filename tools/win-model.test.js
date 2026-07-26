@@ -298,6 +298,17 @@ test('29. 旧方式は削除せず通常表示から折りたたむ', () => {
   assert.ok(html.includes('renderForwardBuyCandidates(currentPredictions, results)'), '通常表示に旧方式の買い候補が混ざる');
 });
 
+test('30. 馬の性別と選択レースへの外部導線を表示する', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+  const edge = fs.readFileSync(path.join(__dirname, '..', 'supabase', 'functions', 'race-data', 'index.ts'), 'utf8');
+  assert.ok(edge.includes('class="Barei'), '出馬表の性齢欄を取得していない');
+  assert.ok(edge.includes('sexMark === "牡" ? "牡"'), '牡・牝・センの正規化がない');
+  assert.ok(html.includes('function horseSexBadge('), '馬名横の性別表示がない');
+  assert.ok(html.includes('horse-sex-gelding'), 'セン馬の表示スタイルがない');
+  assert.ok(html.includes('id="race-source-link"'), '選択レースへのリンクがない');
+  assert.ok(html.includes('race.netkeiba.com/race/shutuba.html?race_id=${id}'), '選択レースのnetkeiba出馬表へ移動できない');
+});
+
 // ---- index.html からスコアリング一式を抽出（jv-import.jsと同方式の簡易版）----
 function loadScoring(html) {
   const src = html.match(/<script>([\s\S]*?)<\/script>/)[1];
